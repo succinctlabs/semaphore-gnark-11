@@ -140,6 +140,7 @@ func keys(cCtx *cli.Context) error {
 		return errors.New("please provide the correct arguments")
 	}
 
+	fmt.Println("reading phase1")
 	phase1Path := cCtx.Args().Get(0)
 	phase1 := &mpcsetup.Phase1{}
 	phase1File, err := os.Open(phase1Path)
@@ -148,6 +149,7 @@ func keys(cCtx *cli.Context) error {
 	}
 	phase1.ReadFrom(phase1File)
 
+	fmt.Println("reading phase2")
 	phase2Path := cCtx.Args().Get(1)
 	phase2 := &mpcsetup.Phase2{}
 	phase2File, err := os.Open(phase2Path)
@@ -156,6 +158,7 @@ func keys(cCtx *cli.Context) error {
 	}
 	phase2.ReadFrom(phase2File)
 
+	fmt.Println("reading evals")
 	evalsPath := cCtx.Args().Get(2)
 	evals := &mpcsetup.Phase2Evaluations{}
 	evalsFile, err := os.Open(evalsPath)
@@ -164,6 +167,7 @@ func keys(cCtx *cli.Context) error {
 	}
 	evals.ReadFrom(evalsFile)
 
+	fmt.Println("reading r1cs")
 	r1csPath := cCtx.Args().Get(3)
 	r1cs := &cs.R1CS{}
 	r1csFile, err := os.Open(r1csPath)
@@ -174,8 +178,10 @@ func keys(cCtx *cli.Context) error {
 
 	// get number of constraints
 	nbConstraints := r1cs.GetNbConstraints()
-
+	fmt.Println("extracting keys")
 	pk, vk := mpcsetup.ExtractKeys(phase1, phase2, evals, nbConstraints)
+	fmt.Println("pk written")
+	fmt.Println("cardinality", pk.Domain.Cardinality)
 
 	pkFile, err := os.Create("pk")
 	if err != nil {
@@ -185,7 +191,6 @@ func keys(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("cardinality", pk.Domain.Cardinality)
 
 	vkFile, err := os.Create("vk")
 	if err != nil {
