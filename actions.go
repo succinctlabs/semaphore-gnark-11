@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 
 	groth16 "github.com/consensys/gnark/backend/groth16/bn254"
@@ -181,6 +182,7 @@ func keys(cCtx *cli.Context) error {
 		return err
 	}
 	pk.WriteDump(pkFile)
+	fmt.Println("cardinality", pk.Domain.Cardinality)
 
 	vkFile, err := os.Create("vk")
 	if err != nil {
