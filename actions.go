@@ -180,7 +180,7 @@ func keys(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	pk.WriteTo(pkFile)
+	pk.WriteDump(pkFile)
 
 	vkFile, err := os.Create("vk")
 	if err != nil {
