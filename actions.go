@@ -181,7 +181,10 @@ func keys(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	pk.WriteDump(pkFile)
+	err = pk.WriteDump(pkFile)
+	if err != nil {
+		return err
+	}
 	fmt.Println("cardinality", pk.Domain.Cardinality)
 
 	vkFile, err := os.Create("vk")
