@@ -3,8 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 	groth16 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/backend/groth16/bn254/mpcsetup"
 	"github.com/consensys/gnark/backend/solidity"
@@ -134,6 +140,96 @@ func p2v(cCtx *cli.Context) error {
 	return nil
 }
 
+func p2u(cCtx *cli.Context) error {
+	if cCtx.Args().Len() != 3 {
+		return errors.New("please provide the correct arguments")
+	}
+	filePath := cCtx.Args().Get(0)
+	region := cCtx.Args().Get(1)
+	bucketName := cCtx.Args().Get(2)
+
+	svc, err := GetS3Service(region)
+	if err != nil {
+		return err
+	}
+
+	// Open the file
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Get file size and read the file content
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
+	// Create an S3 upload input parameters
+	uploadInput := &s3.PutObjectInput{
+		Bucket:        aws.String(bucketName),
+		Key:           aws.String(filepath.Base(filePath)),
+		Body:          file,
+		ContentLength: aws.Int64(fileInfo.Size()),
+	}
+
+	// Upload the file
+	_, err = svc.PutObject(uploadInput)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Successfully uploaded %s to %s\n", filePath, bucketName)
+
+	return nil
+}
+
+func p2d(cCtx *cli.Context) error {
+	if cCtx.Args().Len() != 3 {
+		return errors.New("please provide the correct arguments")
+	}
+	objectKey := cCtx.Args().Get(0)
+	region := cCtx.Args().Get(1)
+	bucketName := cCtx.Args().Get(2)
+	filePath := "./" + objectKey
+
+	svc, err := GetS3Service(region)
+	if err != nil {
+		return err
+	}
+
+	// Create a new file for writing the S3 object contents to
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Create the download input parameters
+	downloadInput := &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	}
+
+	// Download the file from S3
+	result, err := svc.GetObject(downloadInput)
+	if err != nil {
+		return err
+	}
+	defer result.Body.Close()
+
+	// Write the contents to the local file
+	numBytes, err := io.Copy(file, result.Body)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Successfully downloaded %s to %s (%d bytes)\n", objectKey, filePath, numBytes)
+
+	return nil
+}
+
 func keys(cCtx *cli.Context) error {
 	// sanity check
 	if cCtx.Args().Len() != 4 {
@@ -249,4 +345,35 @@ func ClonePhase2(phase2 *mpcsetup.Phase2) mpcsetup.Phase2 {
 	r.Hash = append(r.Hash, phase2.Hash...)
 
 	return r
+}
+
+func GetS3Service(region string) (*s3.S3, error) {
+	accessKeyId, exists := os.LookupEnv("AWS_ACCESS_KEY_ID")
+	if !exists {
+		return nil, errors.New("Please set the AWS_ACCESS_KEY_ID environment variable")
+	}
+
+	secretAccessKey, exists := os.LookupEnv("AWS_SECRET_ACCESS_KEY")
+	if !exists {
+		return nil, errors.New("Please set the AWS_SECRET_ACCESS_KEY environment variable")
+	}
+
+	credentials := credentials.NewStaticCredentials(accessKeyId, secretAccessKey, "")
+
+	// Create custom AWS configuration
+	config := &aws.Config{
+		Region:      aws.String(region),
+		Credentials: credentials,
+	}
+
+	// Create a new AWS session with the custom config
+	sess, err := session.NewSession(config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create S3 service client
+	svc := s3.New(sess)
+
+	return svc, nil
 }

@@ -28,6 +28,13 @@ func main() {
 				Description: "initialize phase 2 for the given circuit",
 				Action:      p2n,
 			},
+			/* ----------------------------- Phase 2 Download from S3 ----------------------- */
+			{
+				Name:        "p2d",
+				Usage:       "p2d <objectKey> <s3region> <s3bucket>",
+				Description: "download a phase 2 contribution from an AWS S3 bucket",
+				Action:      p2d,
+			},
 			/* --------------------------- Phase 2 Contribute --------------------------- */
 			{
 				Name:        "p2c",
@@ -41,6 +48,13 @@ func main() {
 				Usage:       "p2v <inputPath> <originPath>",
 				Description: "verify phase 2 contributions for Groth16",
 				Action:      p2v,
+			},
+			/* ----------------------------- Phase 2 Upload to S3 ----------------------- */
+			{
+				Name:        "p2u",
+				Usage:       "p2u <inputPath> <s3region> <s3bucket>",
+				Description: "upload a phase 2 contribution to an AWS S3 bucket",
+				Action:      p2u,
 			},
 			/* ----------------------------- Keys Extraction ---------------------------- */
 			{
