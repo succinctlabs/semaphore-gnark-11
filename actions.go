@@ -192,7 +192,7 @@ func p2d(cCtx *cli.Context) error {
 	objectKey := cCtx.Args().Get(0)
 	region := cCtx.Args().Get(1)
 	bucketName := cCtx.Args().Get(2)
-	filePath := "./" + objectKey
+	filePath := "./trusted-setup/" + objectKey
 
 	svc, err := GetS3Service(region)
 	if err != nil {
