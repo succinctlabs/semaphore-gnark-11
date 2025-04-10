@@ -4,8 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -18,6 +22,9 @@ import (
 	"github.com/urfave/cli/v2"
 	deserializer "github.com/worldcoin/ptau-deserializer/deserialize"
 )
+
+const Region = "us-east-2"
+const BucketName = "succinct-trusted-setup"
 
 func p1i(cCtx *cli.Context) error {
 	// sanity check
@@ -93,16 +100,54 @@ func p2n(cCtx *cli.Context) error {
 }
 
 func p2c(cCtx *cli.Context) error {
-	inputPh2Path := cCtx.Args().Get(0)
-	outputPh2Path := cCtx.Args().Get(1)
+	var err error
+	if cCtx.Args().Len() != 1 {
+		return errors.New("please provide the correct arguments")
+	}
 
-	inputFile, err := os.Open(inputPh2Path)
+	presignedUploadUrl := cCtx.Args().Get(0)
+	re := regexp.MustCompile(`phase2(?:-(?<index>\d+))?\?`)
+	matches := re.FindStringSubmatch(presignedUploadUrl)
+	contributionIndex := 0
+
+	if matches == nil {
+		return fmt.Errorf("The presigned URL doesn't contain a phase2 object key")
+	}
+
+	if matches[1] != "" {
+		contributionIndex, err = strconv.Atoi(matches[1])
+		if err != nil {
+			return err
+		}
+	}
+
+	previousContributionObjectKey := "phase2"
+
+	if contributionIndex > 0 {
+		previousContributionObjectKey = fmt.Sprintf("%s-%d", previousContributionObjectKey, contributionIndex-1)
+	}
+
+	outputPh2Path := fmt.Sprintf("./trusted-setup/phase2-%d", contributionIndex)
+
+	svc, err := GetS3Service(Region, true)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Downloading previous contribution: %s\n", previousContributionObjectKey)
+	inputPh2Path, err := Download(svc, previousContributionObjectKey)
+	if err != nil {
+		return err
+	}
+
+	inputFile, err := os.Open(*inputPh2Path)
 	if err != nil {
 		return err
 	}
 	phase2 := &mpcsetup.Phase2{}
 	phase2.ReadFrom(inputFile)
 
+	fmt.Printf("Generating contribution\n")
 	phase2.Contribute()
 
 	outputFile, err := os.Create(outputPh2Path)
@@ -111,50 +156,70 @@ func p2c(cCtx *cli.Context) error {
 	}
 	phase2.WriteTo(outputFile)
 
+	fmt.Printf("Uploading contribution: phase2-%d\n", contributionIndex)
+	err = Upload(outputPh2Path, presignedUploadUrl)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func p2v(cCtx *cli.Context) error {
-	if cCtx.Args().Len() != 2 {
+	if cCtx.Args().Len() != 1 {
 		return errors.New("please provide the correct arguments")
 	}
-	inputPath := cCtx.Args().Get(0)
-	originPath := cCtx.Args().Get(1)
+	contributionIndex := cCtx.Args().Get(0)
 
-	inputFile, err := os.Open(inputPath)
+	svc, err := GetS3Service(Region, true)
+	if err != nil {
+		return err
+	}
+
+	currentContribution := fmt.Sprintf("phase2-%s", contributionIndex)
+
+	fmt.Printf("Downloading current contribution: %s\n", currentContribution)
+	inputPath, err := Download(svc, currentContribution)
+	if err != nil {
+		return err
+	}
+
+	inputFile, err := os.Open(*inputPath)
 	if err != nil {
 		return err
 	}
 	input := &mpcsetup.Phase2{}
 	input.ReadFrom(inputFile)
 
-	originFile, err := os.Open(originPath)
+	fmt.Printf("Downloading phase2\n")
+	originPath, err := Download(svc, "phase2")
+	if err != nil {
+		return err
+	}
+
+	originFile, err := os.Open(*originPath)
 	if err != nil {
 		return err
 	}
 	origin := &mpcsetup.Phase2{}
 	origin.ReadFrom(originFile)
 
+	fmt.Printf("Verifying\n")
 	mpcsetup.VerifyPhase2(origin, input)
 
+	fmt.Printf("Ok!\n")
 	return nil
 }
 
 func p2u(cCtx *cli.Context) error {
-	if cCtx.Args().Len() != 3 {
-		return errors.New("please provide the correct arguments")
-	}
-	filePath := cCtx.Args().Get(0)
-	region := cCtx.Args().Get(1)
-	bucketName := cCtx.Args().Get(2)
 
-	svc, err := GetS3Service(region)
+	svc, err := GetS3Service(Region, false)
 	if err != nil {
 		return err
 	}
 
 	// Open the file
-	file, err := os.Open(filePath)
+	file, err := os.Open("./trusted-setup/phase2")
 	if err != nil {
 		return err
 	}
@@ -168,8 +233,8 @@ func p2u(cCtx *cli.Context) error {
 
 	// Create an S3 upload input parameters
 	uploadInput := &s3.PutObjectInput{
-		Bucket:        aws.String(bucketName),
-		Key:           aws.String(filepath.Base(filePath)),
+		Bucket:        aws.String(BucketName),
+		Key:           aws.String(filepath.Base("phase2")),
 		Body:          file,
 		ContentLength: aws.Int64(fileInfo.Size()),
 	}
@@ -180,52 +245,47 @@ func p2u(cCtx *cli.Context) error {
 		return err
 	}
 
-	fmt.Printf("Successfully uploaded %s to %s\n", filePath, bucketName)
-
 	return nil
 }
 
-func p2d(cCtx *cli.Context) error {
-	if cCtx.Args().Len() != 3 {
+func presigned(cCtx *cli.Context) error {
+	if cCtx.Args().Len() != 1 {
 		return errors.New("please provide the correct arguments")
 	}
-	objectKey := cCtx.Args().Get(0)
-	region := cCtx.Args().Get(1)
-	bucketName := cCtx.Args().Get(2)
-	filePath := "./trusted-setup/" + objectKey
 
-	svc, err := GetS3Service(region)
+	countStr := cCtx.Args().Get(0)
+
+	count, err := strconv.Atoi(countStr)
 	if err != nil {
 		return err
 	}
 
-	// Create a new file for writing the S3 object contents to
-	file, err := os.Create(filePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+	putLifetime := 7 * 24 * time.Hour
 
-	// Create the download input parameters
-	downloadInput := &s3.GetObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-	}
-
-	// Download the file from S3
-	result, err := svc.GetObject(downloadInput)
-	if err != nil {
-		return err
-	}
-	defer result.Body.Close()
-
-	// Write the contents to the local file
-	numBytes, err := io.Copy(file, result.Body)
+	svc, err := GetS3Service(Region, false)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Successfully downloaded %s to %s (%d bytes)\n", objectKey, filePath, numBytes)
+	for i := 0; i < count; i++ {
+		// Create the PutObjectInput parameters
+		putObjectInput := &s3.PutObjectInput{
+			Bucket: aws.String(BucketName),
+			Key:    aws.String(fmt.Sprintf("phase2-%d", i)),
+		}
+
+		// Create a request object for PutObject
+		req, _ := svc.PutObjectRequest(putObjectInput)
+
+		// Presign the request with the specified expiration
+		putURLStr, err := req.Presign(putLifetime) // Use the PUT lifetime
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("%d: %s\n", i, putURLStr)
+
+	}
 
 	return nil
 }
@@ -347,23 +407,21 @@ func ClonePhase2(phase2 *mpcsetup.Phase2) mpcsetup.Phase2 {
 	return r
 }
 
-func GetS3Service(region string) (*s3.S3, error) {
-	accessKeyId, exists := os.LookupEnv("AWS_ACCESS_KEY_ID")
-	if !exists {
-		return nil, errors.New("Please set the AWS_ACCESS_KEY_ID environment variable")
-	}
-
-	secretAccessKey, exists := os.LookupEnv("AWS_SECRET_ACCESS_KEY")
-	if !exists {
-		return nil, errors.New("Please set the AWS_SECRET_ACCESS_KEY environment variable")
-	}
-
-	credentials := credentials.NewStaticCredentials(accessKeyId, secretAccessKey, "")
-
+func GetS3Service(region string, anonymous bool) (*s3.S3, error) {
 	// Create custom AWS configuration
 	config := &aws.Config{
-		Region:      aws.String(region),
-		Credentials: credentials,
+		Region: aws.String(region),
+	}
+
+	if anonymous {
+		config.Credentials = credentials.AnonymousCredentials
+	}
+
+	customEndpoint, exists := os.LookupEnv("CUSTOM_ENDPOINT")
+
+	if exists {
+		config.Endpoint = aws.String(customEndpoint)
+		config.S3ForcePathStyle = aws.Bool(true)
 	}
 
 	// Create a new AWS session with the custom config
@@ -376,4 +434,72 @@ func GetS3Service(region string) (*s3.S3, error) {
 	svc := s3.New(sess)
 
 	return svc, nil
+}
+
+func Download(svc *s3.S3, objectKey string) (*string, error) {
+
+	filePath := "./trusted-setup/" + objectKey
+
+	// Create a new file for writing the S3 object contents to
+	file, err := os.Create(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	// Create the download input parameters
+	downloadInput := &s3.GetObjectInput{
+		Bucket: aws.String(BucketName),
+		Key:    aws.String(objectKey),
+	}
+
+	// Download the file from S3
+	result, err := svc.GetObject(downloadInput)
+	if err != nil {
+		return nil, err
+	}
+	defer result.Body.Close()
+
+	// Write the contents to the local file
+	_, err = io.Copy(file, result.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return &filePath, nil
+}
+
+func Upload(filePath string, presignedURL string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	fileSize := fileInfo.Size()
+
+	request, err := http.NewRequest(http.MethodPut, presignedURL, file)
+	if err != nil {
+		return err
+	}
+
+	request.Header.Set("Content-Type", "application/octet-stream")
+	request.ContentLength = fileSize
+
+	client := &http.Client{} // Use the default client or configure one if needed
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("Upload failed: Status Code: %d", response.StatusCode)
+	}
+
+	return nil
 }

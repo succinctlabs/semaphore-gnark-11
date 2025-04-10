@@ -28,17 +28,17 @@ func main() {
 				Description: "initialize phase 2 for the given circuit",
 				Action:      p2n,
 			},
-			/* ----------------------------- Phase 2 Download from S3 ----------------------- */
+			/* ----------------------------- Phase 2 Upload to S3 ----------------------- */
 			{
-				Name:        "p2d",
-				Usage:       "p2d <objectKey> <s3region> <s3bucket>",
-				Description: "download a phase 2 contribution from an AWS S3 bucket",
-				Action:      p2d,
+				Name:        "p2u",
+				Usage:       "p2u",
+				Description: "upload the initial phase 2 to an AWS S3 bucket",
+				Action:      p2u,
 			},
 			/* --------------------------- Phase 2 Contribute --------------------------- */
 			{
 				Name:        "p2c",
-				Usage:       "p2c <inputPh2> <outputPh2>",
+				Usage:       "p2c <index> <uploadPresignedUrl>",
 				Description: "contribute phase 2 randomness for Groth16",
 				Action:      p2c,
 			},
@@ -49,12 +49,12 @@ func main() {
 				Description: "verify phase 2 contributions for Groth16",
 				Action:      p2v,
 			},
-			/* ----------------------------- Phase 2 Upload to S3 ----------------------- */
+			/* ----------------------------- Generate presigned URLs -------------------- */
 			{
-				Name:        "p2u",
-				Usage:       "p2u <inputPath> <s3region> <s3bucket>",
-				Description: "upload a phase 2 contribution to an AWS S3 bucket",
-				Action:      p2u,
+				Name:        "presigned",
+				Usage:       "presigned <count>",
+				Description: "Generate presigned URLs used to upload contributions to the AWS S3 bucket",
+				Action:      presigned,
 			},
 			/* ----------------------------- Keys Extraction ---------------------------- */
 			{
