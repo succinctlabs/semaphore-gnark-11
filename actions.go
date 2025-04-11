@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -162,6 +163,10 @@ func p2c(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+
+	hash := hex.EncodeToString(phase2.Hash)
+
+	fmt.Printf("Contribution successful! Hash: %s\n", hash)
 
 	return nil
 }
