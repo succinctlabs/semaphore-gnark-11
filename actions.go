@@ -24,7 +24,6 @@ import (
 )
 
 const Region = "us-east-2"
-const BucketName = "succinct-trusted-setup"
 
 func p1i(cCtx *cli.Context) error {
 	// sanity check
@@ -101,11 +100,13 @@ func p2n(cCtx *cli.Context) error {
 
 func p2c(cCtx *cli.Context) error {
 	var err error
-	if cCtx.Args().Len() != 1 {
+	if cCtx.Args().Len() != 2 {
 		return errors.New("please provide the correct arguments")
 	}
 
 	presignedUploadUrl := cCtx.Args().Get(0)
+	bucketName := cCtx.Args().Get(1)
+
 	re := regexp.MustCompile(`phase2(?:-(?<index>\d+))?\?`)
 	matches := re.FindStringSubmatch(presignedUploadUrl)
 	contributionIndex := 0
@@ -135,7 +136,7 @@ func p2c(cCtx *cli.Context) error {
 	}
 
 	fmt.Printf("Downloading previous contribution: %s\n", previousContributionObjectKey)
-	inputPh2Path, err := Download(svc, previousContributionObjectKey)
+	inputPh2Path, err := Download(svc, previousContributionObjectKey, bucketName)
 	if err != nil {
 		return err
 	}
@@ -166,10 +167,11 @@ func p2c(cCtx *cli.Context) error {
 }
 
 func p2v(cCtx *cli.Context) error {
-	if cCtx.Args().Len() != 1 {
+	if cCtx.Args().Len() != 2 {
 		return errors.New("please provide the correct arguments")
 	}
 	contributionIndex := cCtx.Args().Get(0)
+	bucketName := cCtx.Args().Get(1)
 
 	svc, err := GetS3Service(Region, true)
 	if err != nil {
@@ -179,7 +181,7 @@ func p2v(cCtx *cli.Context) error {
 	currentContribution := fmt.Sprintf("phase2-%s", contributionIndex)
 
 	fmt.Printf("Downloading current contribution: %s\n", currentContribution)
-	inputPath, err := Download(svc, currentContribution)
+	inputPath, err := Download(svc, currentContribution, bucketName)
 	if err != nil {
 		return err
 	}
@@ -192,7 +194,7 @@ func p2v(cCtx *cli.Context) error {
 	input.ReadFrom(inputFile)
 
 	fmt.Printf("Downloading phase2\n")
-	originPath, err := Download(svc, "phase2")
+	originPath, err := Download(svc, "phase2", bucketName)
 	if err != nil {
 		return err
 	}
@@ -212,6 +214,10 @@ func p2v(cCtx *cli.Context) error {
 }
 
 func p2u(cCtx *cli.Context) error {
+	if cCtx.Args().Len() != 1 {
+		return errors.New("please provide the correct arguments")
+	}
+	bucketName := cCtx.Args().Get(0)
 
 	svc, err := GetS3Service(Region, false)
 	if err != nil {
@@ -233,7 +239,7 @@ func p2u(cCtx *cli.Context) error {
 
 	// Create an S3 upload input parameters
 	uploadInput := &s3.PutObjectInput{
-		Bucket:        aws.String(BucketName),
+		Bucket:        aws.String(bucketName),
 		Key:           aws.String(filepath.Base("phase2")),
 		Body:          file,
 		ContentLength: aws.Int64(fileInfo.Size()),
@@ -249,11 +255,12 @@ func p2u(cCtx *cli.Context) error {
 }
 
 func presigned(cCtx *cli.Context) error {
-	if cCtx.Args().Len() != 1 {
+	if cCtx.Args().Len() != 2 {
 		return errors.New("please provide the correct arguments")
 	}
 
-	countStr := cCtx.Args().Get(0)
+	bucketName := cCtx.Args().Get(0)
+	countStr := cCtx.Args().Get(1)
 
 	count, err := strconv.Atoi(countStr)
 	if err != nil {
@@ -270,7 +277,7 @@ func presigned(cCtx *cli.Context) error {
 	for i := 0; i < count; i++ {
 		// Create the PutObjectInput parameters
 		putObjectInput := &s3.PutObjectInput{
-			Bucket: aws.String(BucketName),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(fmt.Sprintf("phase2-%d", i)),
 		}
 
@@ -436,7 +443,7 @@ func GetS3Service(region string, anonymous bool) (*s3.S3, error) {
 	return svc, nil
 }
 
-func Download(svc *s3.S3, objectKey string) (*string, error) {
+func Download(svc *s3.S3, objectKey string, bucketName string) (*string, error) {
 
 	filePath := "./trusted-setup/" + objectKey
 
@@ -449,7 +456,7 @@ func Download(svc *s3.S3, objectKey string) (*string, error) {
 
 	// Create the download input parameters
 	downloadInput := &s3.GetObjectInput{
-		Bucket: aws.String(BucketName),
+		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
 	}
 
