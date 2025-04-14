@@ -1,6 +1,6 @@
 # Guide to the Succinct Trusted Setup Contribution Ceremony
 
-This tool allows users to run an MPC ceremony for generating the proving and verifying keys for the Groth16 protocol used by Succinct [SP1](https://docs.succinct.xyz/docs/sp1/introduction).
+This tool allows users to run an MPC ceremony for generating the proving and verifying keys for the Groth16/PLONK circuits used by Succinct [SP1](https://docs.succinct.xyz/docs/sp1/introduction).
 
 This repo is based on Worldcoin [Semaphore Merkle Tree Batcher](http://github.com/worldcoin/semaphore-mtb/).
 
