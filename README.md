@@ -23,7 +23,7 @@ In the phase 2, participants add randomness to make the setup specific to the ac
 ### Clone the repository and compile the program
 
 ```bash
-git clone https://github.com/jtguibas/semaphore-gnark-11.git
+git clone https://github.com/succinctlabs/semaphore-gnark-11.git
 cd semaphore-gnark-11
 go build
 mkdir trusted-setup
