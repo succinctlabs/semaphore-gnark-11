@@ -1,10 +1,8 @@
-# Guide to the Semaphore Merkle Tree Batcher MPC Contribution Ceremony
+# Guide to the Succinct Trusted Setup Contribution Ceremony
 
-This tool allows users to run an MPC ceremony for generating the proving and verifying keys for the Groth16 protocol as presented in [BGM17](https://eprint.iacr.org/2017/1050.pdf). It does not include the beacon contribution since it was proved in [KMSV21](https://eprint.iacr.org/2021/219.pdf) that the security of the generated SRS still holds without it.
+This tool allows users to run an MPC ceremony for generating the proving and verifying keys for the Groth16/PLONK circuits used by Succinct [SP1](https://docs.succinct.xyz/docs/sp1/introduction).
 
-## Semaphore Merkle Tree Batcher (SMTB)
-
-[SMTB](http://github.com/worldcoin/semaphore-mtb/) is a service for batch processing of Merkle tree updates. It is designed to be used in conjunction with the [World ID contracts](https://github.com/worldcoin/world-id-contracts) which use [Semaphore](https://github.com/semaphore-protocol/semaphore) as a dependency. It accepts Merkle tree updates and batches them together into a single one. This is useful for reducing the number of transactions that need to be submitted to the blockchain. The correctness of the batched Merkle tree update is assured through the generation of a SNARK (generated through [gnark](https://github.com/ConsenSys/gnark)).
+This repo is adapted from Worldcoin's [Semaphore Merkle Tree Batcher](http://github.com/worldcoin/semaphore-mtb/).
 
 ## Reasoning behind a custom trusted setup
 
@@ -41,7 +39,9 @@ You will need two pieces of information provided by the coordinator:
 Once you have received these 2 pieces of information, you can run the program below:
 
 ```bash
-./semaphore-gnark-11 p2c <presignedUrl> <bucketName>
+# Make sure to add quotes around the presigned URL to avoid `&` character in the URL being interpreted by your shell
+# The command below can take around 10-20 minutes to complete
+./semaphore-gnark-11 p2c "<presignedUrl>" <bucketName>
 ```
 
 The output should look like this:
@@ -65,7 +65,7 @@ Once the coordinator has verified your contribution, you can publish an attestat
 If you want, you can verify any contribution given its index. Run the following command:
 
 ```bash
-./semaphore-gnark-11 p2v <index>
+./semaphore-gnark-11 p2v <index> <bucketName>
 ```
 
 The output should look like this:
