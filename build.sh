@@ -1,6 +1,6 @@
 #!/bin/bash
 
-for ARCH in darwin_amd64 darwin_arm64 linux_386 linux_arm64 linux_arm; do
+for ARCH in darwin_amd64 darwin_arm64 linux_amd64 linux_386 linux_arm64 linux_arm; do
   case "$ARCH" in
     darwin_amd64)
       # For Intel-based MacBooks and other x86_64 machines
@@ -11,6 +11,11 @@ for ARCH in darwin_amd64 darwin_arm64 linux_386 linux_arm64 linux_arm; do
       # For Apple Silicon-based MacBooks and other arm64 machines
       export GOARCH=arm64
       export GOOS=darwin
+      ;;
+    linux_amd64)
+      # For Linux x86_64 machines
+      export GOARCH=amd64
+      export GOOS=linux
       ;;
     linux_386)
       # For 32-bit machines

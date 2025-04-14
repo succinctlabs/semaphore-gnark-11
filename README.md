@@ -20,88 +20,61 @@ For the phase 1 we will be reusing the setup done by the joint effort of many co
 
 ## Phase 2
 
-This phase is circuit-specific, so if you have `n` circuits, then you need to run this phase `n` times.
+In the phase 2, participants add randomness to make the setup specific to the actual circuit, creating the final proving and verification keys needed for SP1. To add your contribution to the phase 2, follow the steps below:
 
-### snarkjs Powers of Tau deserialization
-
-Download the Powers of Tau () (`.ptau`) file you need corresponding to the amount of constraints in your circuit from the [`snarkjs` repository](https://github.com/iden3/snarkjs#7-prepare-phase-2).
-
-Remember that you need sufficiently high powers of tau ceremony to generate a proof for a circuit with a given amount of constraints ($2^{POW_OF_TAU} >= CIRCUIT_CONSTRAINTS$):
-
-Import phase 1 by deserializing a .ptau file: `semaphore-mtb-setup p1i <ceremony.ptau> <lastPhase1Contribution.ph1>`.
-
-To get a sample r1cs file from `semaphore-mtb`, checkout the [`semaphore-mtb` repository](https://github.com/worldcoin/semaphore-mtb.git) and run the following command:
+### Clone the repository and compile the program
 
 ```bash
-cd ..
-git clone https://github.com/worldcoin/semaphore-mtb.git
-cd semaphore-mtb
+git clone https://github.com/jtguibas/semaphore-gnark-11.git
+cd semaphore-gnark-11
 go build
-./gnark-mbu r1cs --mode <insertion/deletion> --tree-depth=<TREE_DEPTH> --batch-size=<BATCH_SIZE> --output=demo_smtb.r1cs
-cd ..
 ```
 
-Move the file into the `semaphore-mtb-setup` directory:
+### Run the contribution program to add your contribution
+
+You will need two pieces of information provided by the coordinator:
+
+* A Presigned URL: This is a special, temporary URL that grants permission to upload your contribution. It will look like a long web address.
+* The S3 Bucket Name: The name of the cloud storage bucket where the ceremony files are stored.
+
+Once you have received these 2 pieces of information, you can run the program below:
 
 ```bash
-mv ./semaphore-mtb/demo_smtb.r1cs ./semaphore-mtb-setup/smtb.r1cs
+./semaphore-gnark-11 p2c <presignedUrl> <bucketName>
 ```
 
-### Initialization
+The output should look like this:
 
-Depending on the R1CS file, the coordinator runs one of the following commands:
+```
+Downloading previous contribution: phase2-0
+Generating contribution
+Uploading contribution: phase2-1
+Contribution successful!
+Once your contribution has been verified by the coordinator, you can attest for it on social media, providing the following info:
+ - Contribution URL: https://succinct-sp1-dev.s3.us-east-2.amazonaws.com/phase2-1
+ - Contribution Hash: db0fbfa74ace3839c07d63041355754131dbfaececfbf64638f51e693455de8d
+```
 
-1. Regular R1CS: `semaphore-mtb-setup p2n <lastPhase1Contribution.ph1> <r1cs> <initialPhase2Contribution.ph2>`.
-2. Parted R1CS: `semaphore-mtb-setup p2np <phase1Path> <r1csPath> <outputPhase2> <#constraints> <#nbR1C> <batchSize>`
+Then you can inform the coordinator that you have added your contribution, by providing them with the hash returned by the program, so they can verify it.
 
-### Contribution
+Once the coordinator has verified your contribution, you can publish an attestation for it on social media, specifying the URL and hash of your contribution.
 
-This process is similar to phase 1, except we use commands `p2c` and `p2v`
-This is a sequential process that will be repeated for each contributor.
+## Verifying contribution
 
-1. The coordinator sends the latest `*.ph2` file to the current contributor
-2. The contributor runs the command `semaphore-mtb-setup p2c <input.ph2> <output.ph2>`.
-3. Upon successful contribution, the program will output **contribution hash** which must be attested to
-4. The contributor sends the output file back to the coordinator
-5. The coordinator verifies the file by running `semaphore-mtb-setup p2v <output.ph2> <initialPhase2Contribution.ph2>`.
-6. Upon successful verification, the coordinator asks the contributor to attest to their contribution.
+If you want, you can verify any contribution given its index. Run the following command:
 
-**Security Note** It is important for the coordinator to keep track of the contribution hashes output by `semaphore-mtb-setup p2v` to determine whether the user has maliciously replaced previous contributions or re-initiated one on its own
+```bash
+./semaphore-gnark-11 p2v <index>
+```
 
-## Keys Extraction
+The output should look like this:
 
-At the end of the ceremony, the coordinator runs `semaphore-mtb-setup key <lastPhase2Contribution.ph2>` which will output **Groth16 bn254 curve** `pk` and `vk` files
-
-## Phase 1 (Powers of Tau)
-
-This phase is to generate a universal structured reference string (SRS) based on a power `p`.
-The value of `2ᵖ` determines the maximum number of constraints for circuits set up in the second phase.
-
-This process will be skipped for the actual ceremony as we will be using the universal SRS generated by the community.
-
-### Participants
-
-1. Coordinator is responsible for initializing, coordinating, and verifying contributions.
-2. Contributors are chosen sequentially by the coordinator to contribute randomness to SRS. More importantly, contributors are requested to attest their contributions to the ceremony (e.g. social media announcements).
-
-### Initialization
-
-**Note** Values between `<>` are arguments replaced by actual values during the setup
-
-1. Coordinator run the command `semaphore-mtb-setup p1n <p> <output.ph1>`.
-
-### Contribution
-
-This is a sequential process that will be repeated for each contributor.
-
-1. The coordinator sends the latest `*.ph1` file to the current contributor
-2. The contributor runs the command `semaphore-mtb-setup p1c <input.ph1> <output.ph1>`.
-3. Upon successful contribution, the program will output **contribution hash** which must be attested to
-4. The contributor sends the output file back to the coordinator
-5. The coordinator verifies the file by running `semaphore-mtb-setup p1v <output.ph1>`.
-6. Upon successful verification, the coordinator asks the contributor to attest to their contribution.
-
-**Security Note** It is important for the coordinator to keep track of the contribution hashes output by `semaphore-mtb-setup p1v` to determine whether the user has maliciously replaced previous contributions or re-initiated one on its own
+```
+Downloading current contribution: phase2-1
+Downloading phase2
+Verifying contribution with hash: db0fbfa74ace3839c07d63041355754131dbfaececfbf64638f51e693455de8d
+Ok!
+```
 
 ## Acknowledgements
 
