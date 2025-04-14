@@ -1,10 +1,21 @@
 package main
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 	groth16 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/backend/groth16/bn254/mpcsetup"
 	"github.com/consensys/gnark/backend/solidity"
@@ -12,6 +23,8 @@ import (
 	"github.com/urfave/cli/v2"
 	deserializer "github.com/worldcoin/ptau-deserializer/deserialize"
 )
+
+const Region = "us-east-2"
 
 func p1i(cCtx *cli.Context) error {
 	// sanity check
@@ -87,16 +100,56 @@ func p2n(cCtx *cli.Context) error {
 }
 
 func p2c(cCtx *cli.Context) error {
-	inputPh2Path := cCtx.Args().Get(0)
-	outputPh2Path := cCtx.Args().Get(1)
+	var err error
+	if cCtx.Args().Len() != 2 {
+		return errors.New("please provide the correct arguments")
+	}
 
-	inputFile, err := os.Open(inputPh2Path)
+	presignedUploadUrl := cCtx.Args().Get(0)
+	bucketName := cCtx.Args().Get(1)
+
+	re := regexp.MustCompile(`phase2(?:-(?<index>\d+))?\?`)
+	matches := re.FindStringSubmatch(presignedUploadUrl)
+	contributionIndex := 0
+
+	if matches == nil {
+		return fmt.Errorf("The presigned URL doesn't contain a phase2 object key")
+	}
+
+	if matches[1] != "" {
+		contributionIndex, err = strconv.Atoi(matches[1])
+		if err != nil {
+			return err
+		}
+	}
+
+	previousContributionObjectKey := "phase2"
+
+	if contributionIndex > 0 {
+		previousContributionObjectKey = fmt.Sprintf("%s-%d", previousContributionObjectKey, contributionIndex-1)
+	}
+
+	outputPh2Path := fmt.Sprintf("./trusted-setup/phase2-%d", contributionIndex)
+
+	svc, err := GetS3Service(Region, true)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Downloading previous contribution: %s\n", previousContributionObjectKey)
+	inputPh2Path, err := Download(svc, previousContributionObjectKey, bucketName)
+	if err != nil {
+		return err
+	}
+
+	inputFile, err := os.Open(*inputPh2Path)
 	if err != nil {
 		return err
 	}
 	phase2 := &mpcsetup.Phase2{}
 	phase2.ReadFrom(inputFile)
 
+	fmt.Printf("Generating contribution\n")
 	phase2.Contribute()
 
 	outputFile, err := os.Create(outputPh2Path)
@@ -105,6 +158,25 @@ func p2c(cCtx *cli.Context) error {
 	}
 	phase2.WriteTo(outputFile)
 
+	fmt.Printf("Uploading contribution: phase2-%d\n", contributionIndex)
+	err = Upload(outputPh2Path, presignedUploadUrl)
+	if err != nil {
+		return err
+	}
+
+	hash := hex.EncodeToString(phase2.Hash)
+
+	downloadURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/phase2-%d",
+		bucketName,
+		Region,
+		contributionIndex,
+	)
+
+	fmt.Printf("Contribution successful!\n")
+	fmt.Printf("Once your contribution has been verified by the coordinator, you can attest for it on social media, providing the following info:\n")
+	fmt.Printf(" - Contribution URL: %s\n", downloadURL)
+	fmt.Printf(" - Contribution Hash: %s\n", hash)
+
 	return nil
 }
 
@@ -112,24 +184,129 @@ func p2v(cCtx *cli.Context) error {
 	if cCtx.Args().Len() != 2 {
 		return errors.New("please provide the correct arguments")
 	}
-	inputPath := cCtx.Args().Get(0)
-	originPath := cCtx.Args().Get(1)
+	contributionIndex := cCtx.Args().Get(0)
+	bucketName := cCtx.Args().Get(1)
 
-	inputFile, err := os.Open(inputPath)
+	svc, err := GetS3Service(Region, true)
+	if err != nil {
+		return err
+	}
+
+	currentContribution := fmt.Sprintf("phase2-%s", contributionIndex)
+
+	fmt.Printf("Downloading current contribution: %s\n", currentContribution)
+	inputPath, err := Download(svc, currentContribution, bucketName)
+	if err != nil {
+		return err
+	}
+
+	inputFile, err := os.Open(*inputPath)
 	if err != nil {
 		return err
 	}
 	input := &mpcsetup.Phase2{}
 	input.ReadFrom(inputFile)
 
-	originFile, err := os.Open(originPath)
+	fmt.Printf("Downloading phase2\n")
+	originPath, err := Download(svc, "phase2", bucketName)
+	if err != nil {
+		return err
+	}
+
+	originFile, err := os.Open(*originPath)
 	if err != nil {
 		return err
 	}
 	origin := &mpcsetup.Phase2{}
 	origin.ReadFrom(originFile)
 
+	fmt.Printf("Verifying contribution with hash: %s\n", hex.EncodeToString(input.Hash))
 	mpcsetup.VerifyPhase2(origin, input)
+
+	fmt.Printf("Ok!\n")
+	return nil
+}
+
+func p2u(cCtx *cli.Context) error {
+	if cCtx.Args().Len() != 1 {
+		return errors.New("please provide the correct arguments")
+	}
+	bucketName := cCtx.Args().Get(0)
+
+	svc, err := GetS3Service(Region, false)
+	if err != nil {
+		return err
+	}
+
+	// Open the file
+	file, err := os.Open("./trusted-setup/phase2")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Get file size and read the file content
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
+	// Create an S3 upload input parameters
+	uploadInput := &s3.PutObjectInput{
+		Bucket:        aws.String(bucketName),
+		Key:           aws.String(filepath.Base("phase2")),
+		Body:          file,
+		ContentLength: aws.Int64(fileInfo.Size()),
+	}
+
+	// Upload the file
+	_, err = svc.PutObject(uploadInput)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func presigned(cCtx *cli.Context) error {
+	if cCtx.Args().Len() != 2 {
+		return errors.New("please provide the correct arguments")
+	}
+
+	bucketName := cCtx.Args().Get(0)
+	countStr := cCtx.Args().Get(1)
+
+	count, err := strconv.Atoi(countStr)
+	if err != nil {
+		return err
+	}
+
+	putLifetime := 7 * 24 * time.Hour
+
+	svc, err := GetS3Service(Region, false)
+	if err != nil {
+		return err
+	}
+
+	for i := 0; i < count; i++ {
+		// Create the PutObjectInput parameters
+		putObjectInput := &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(fmt.Sprintf("phase2-%d", i)),
+		}
+
+		// Create a request object for PutObject
+		req, _ := svc.PutObjectRequest(putObjectInput)
+
+		// Presign the request with the specified expiration
+		putURLStr, err := req.Presign(putLifetime) // Use the PUT lifetime
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("%d: %s\n", i, putURLStr)
+
+	}
 
 	return nil
 }
@@ -249,4 +426,101 @@ func ClonePhase2(phase2 *mpcsetup.Phase2) mpcsetup.Phase2 {
 	r.Hash = append(r.Hash, phase2.Hash...)
 
 	return r
+}
+
+func GetS3Service(region string, anonymous bool) (*s3.S3, error) {
+	// Create custom AWS configuration
+	config := &aws.Config{
+		Region: aws.String(region),
+	}
+
+	if anonymous {
+		config.Credentials = credentials.AnonymousCredentials
+	}
+
+	customEndpoint, exists := os.LookupEnv("CUSTOM_ENDPOINT")
+
+	if exists {
+		config.Endpoint = aws.String(customEndpoint)
+		config.S3ForcePathStyle = aws.Bool(true)
+	}
+
+	// Create a new AWS session with the custom config
+	sess, err := session.NewSession(config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create S3 service client
+	svc := s3.New(sess)
+
+	return svc, nil
+}
+
+func Download(svc *s3.S3, objectKey string, bucketName string) (*string, error) {
+
+	filePath := "./trusted-setup/" + objectKey
+
+	// Create a new file for writing the S3 object contents to
+	file, err := os.Create(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	// Create the download input parameters
+	downloadInput := &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	}
+
+	// Download the file from S3
+	result, err := svc.GetObject(downloadInput)
+	if err != nil {
+		return nil, err
+	}
+	defer result.Body.Close()
+
+	// Write the contents to the local file
+	_, err = io.Copy(file, result.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return &filePath, nil
+}
+
+func Upload(filePath string, presignedURL string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	fileSize := fileInfo.Size()
+
+	request, err := http.NewRequest(http.MethodPut, presignedURL, file)
+	if err != nil {
+		return err
+	}
+
+	request.Header.Set("Content-Type", "application/octet-stream")
+	request.ContentLength = fileSize
+
+	client := &http.Client{} // Use the default client or configure one if needed
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("Upload failed: Status Code: %d", response.StatusCode)
+	}
+
+	return nil
 }
