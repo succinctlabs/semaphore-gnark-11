@@ -1,4 +1,4 @@
-module github.com/mattstam/semaphore-mtb-setup
+module github.com/mattstam/semaphore-gnark-11
 
 go 1.23
 
