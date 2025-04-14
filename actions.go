@@ -24,7 +24,7 @@ import (
 	deserializer "github.com/worldcoin/ptau-deserializer/deserialize"
 )
 
-const Region = "us-east-2"
+const Region = "us-west-1"
 
 func p1i(cCtx *cli.Context) error {
 	// sanity check
