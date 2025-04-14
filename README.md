@@ -2,7 +2,7 @@
 
 This tool allows users to run an MPC ceremony for generating the proving and verifying keys for the Groth16/PLONK circuits used by Succinct [SP1](https://docs.succinct.xyz/docs/sp1/introduction).
 
-This repo is based on Worldcoin [Semaphore Merkle Tree Batcher](http://github.com/worldcoin/semaphore-mtb/).
+This repo is adapted from Worldcoin's [Semaphore Merkle Tree Batcher](http://github.com/worldcoin/semaphore-mtb/).
 
 ## Reasoning behind a custom trusted setup
 
