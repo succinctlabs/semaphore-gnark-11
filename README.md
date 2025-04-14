@@ -28,6 +28,7 @@ In the phase 2, participants add randomness to make the setup specific to the ac
 git clone https://github.com/jtguibas/semaphore-gnark-11.git
 cd semaphore-gnark-11
 go build
+mkdir trusted-setup
 ```
 
 ### Run the contribution program to add your contribution
