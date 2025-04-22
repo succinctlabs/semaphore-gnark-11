@@ -166,7 +166,7 @@ func p2c(cCtx *cli.Context) error {
 
 	hash := hex.EncodeToString(phase2.Hash)
 
-	downloadURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/phase2-%d",
+	downloadURL := fmt.Sprintf("http://%s.s3.%s.amazonaws.com/phase2-%d",
 		bucketName,
 		Region,
 		contributionIndex,
