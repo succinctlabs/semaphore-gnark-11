@@ -221,7 +221,10 @@ func p2v(cCtx *cli.Context) error {
 	origin.ReadFrom(originFile)
 
 	fmt.Printf("Verifying contribution with hash: %s\n", hex.EncodeToString(input.Hash))
-	mpcsetup.VerifyPhase2(origin, input)
+	if err := mpcsetup.VerifyPhase2(origin, input); err != nil {
+		println("Phase2 Verification failed:", err.Error())
+		return err
+	}
 
 	fmt.Printf("Ok!\n")
 	return nil
