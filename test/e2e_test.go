@@ -2,13 +2,16 @@ package test
 
 import (
 	"os"
+	"reflect"
 	"strconv"
 	"testing"
+	"unsafe"
 
 	curve "github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	native_mimc "github.com/consensys/gnark-crypto/ecc/bn254/fr/mimc"
 	"github.com/consensys/gnark/backend/groth16"
+	groth16Impl "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/backend/groth16/bn254/mpcsetup"
 	cs "github.com/consensys/gnark/constraint/bn254"
 	"github.com/consensys/gnark/frontend"
@@ -26,6 +29,13 @@ type Config struct {
 	PkOutputPath                      string
 	VkOutputPath                      string
 	Power                             int
+}
+
+// getPhase1Commons extracts the unexported SrsCommons from Phase1 using reflection
+func getPhase1Commons(phase1 *mpcsetup.Phase1) *mpcsetup.SrsCommons {
+	v := reflect.ValueOf(phase1).Elem()
+	params := v.FieldByName("parameters")
+	return (*mpcsetup.SrsCommons)(unsafe.Pointer(params.UnsafeAddr()))
 }
 
 func TestEndToEnd(t *testing.T) {
@@ -68,7 +78,12 @@ func TestEndToEnd(t *testing.T) {
 		panic(err)
 	}
 
-	phase2, evals := mpcsetup.InitPhase2(&r1cs, &phase1)
+	// Get SrsCommons from Phase1 using reflection
+	commons := getPhase1Commons(&phase1)
+
+	// Initialize Phase2
+	phase2 := &mpcsetup.Phase2{}
+	evals := phase2.Initialize(&r1cs, commons)
 
 	phase2File, err := os.Create(config.Phase2OutputPath)
 	if err != nil {
@@ -76,38 +91,63 @@ func TestEndToEnd(t *testing.T) {
 	}
 	phase2.WriteTo(phase2File)
 
-	evalsFile, err := os.Create(config.EvalsOutputPath)
-	if err != nil {
-		panic(err)
-	}
-	evals.WriteTo(evalsFile)
+	// Store initial phase2 for verification
+	initialPhase2 := &mpcsetup.Phase2{}
+	initialPhase2.Initialize(&r1cs, commons)
 
 	for i := 0; i < config.NContributionsPhase2; i++ {
-		prev := ClonePhase2(&phase2)
+		// Read the previous contribution
+		prevFile, err := os.Open(config.Phase2OutputPath)
+		if err != nil {
+			panic(err)
+		}
+		prev := &mpcsetup.Phase2{}
+		prev.ReadFrom(prevFile)
+		prevFile.Close()
+
 		phase2.Contribute()
-		mpcsetup.VerifyPhase2(&prev, &phase2)
+
+		// Verify the contribution
+		if err := prev.Verify(phase2); err != nil {
+			panic(err)
+		}
+
 		phase2WithContributionFile, err := os.Create(config.Phase2WithContributionsOutputPath + "/contribution-" + strconv.Itoa(i))
 		if err != nil {
 			panic(err)
 		}
 		phase2.WriteTo(phase2WithContributionFile)
 		phase2WithContributionFile.Close()
+
+		// Update phase2 file for next iteration
+		phase2File, err := os.Create(config.Phase2OutputPath)
+		if err != nil {
+			panic(err)
+		}
+		phase2.WriteTo(phase2File)
+		phase2File.Close()
 	}
 
-	pk, vk := mpcsetup.ExtractKeys(&phase1, &phase2, &evals, r1cs.GetNbConstraints())
+	// Use a deterministic beacon challenge for key extraction
+	beaconChallenge := []byte("test-beacon-challenge")
+
+	pk, vk := phase2.Seal(commons, &evals, beaconChallenge)
+
+	pkTyped := pk.(*groth16Impl.ProvingKey)
+	vkTyped := vk.(*groth16Impl.VerifyingKey)
 
 	pkFile, err := os.Create(config.PkOutputPath)
 	if err != nil {
 		panic(err)
 	}
-	pk.WriteTo(pkFile)
+	pkTyped.WriteTo(pkFile)
 	pkFile.Close()
 
 	vkFile, err := os.Create(config.VkOutputPath)
 	if err != nil {
 		panic(err)
 	}
-	vk.WriteTo(vkFile)
+	vkTyped.WriteTo(vkFile)
 	vkFile.Close()
 
 	// Build the witness
@@ -129,12 +169,12 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	// groth16: ensure proof is verified
-	proof, err := groth16.Prove(&r1cs, &pk, witness)
+	proof, err := groth16.Prove(&r1cs, pkTyped, witness)
 	if err != nil {
 		panic(err)
 	}
 
-	err = groth16.Verify(proof, &vk, pubWitness)
+	err = groth16.Verify(proof, vkTyped, pubWitness)
 	if err != nil {
 		panic(err)
 	}

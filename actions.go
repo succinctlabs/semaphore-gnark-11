@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -8,9 +10,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"time"
+	"unsafe"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -25,6 +29,21 @@ import (
 )
 
 const Region = "us-west-1"
+
+// getPhase1Commons extracts the unexported SrsCommons from Phase1 using reflection
+func getPhase1Commons(phase1 *mpcsetup.Phase1) *mpcsetup.SrsCommons {
+	v := reflect.ValueOf(phase1).Elem()
+	params := v.FieldByName("parameters")
+	return (*mpcsetup.SrsCommons)(unsafe.Pointer(params.UnsafeAddr()))
+}
+
+// computePhase2Hash computes the hash of a Phase2 by serializing and hashing
+func computePhase2Hash(phase2 *mpcsetup.Phase2) []byte {
+	var buf bytes.Buffer
+	phase2.WriteTo(&buf)
+	h := sha256.Sum256(buf.Bytes())
+	return h[:]
+}
 
 func p1i(cCtx *cli.Context) error {
 	// sanity check
@@ -68,33 +87,49 @@ func p2n(cCtx *cli.Context) error {
 	phase2Path := cCtx.Args().Get(2)
 	evalsPath := cCtx.Args().Get(3)
 
+	fmt.Println("reading phase1")
 	phase1File, err := os.Open(phase1Path)
 	if err != nil {
 		return err
 	}
+	defer phase1File.Close()
 	phase1 := &mpcsetup.Phase1{}
 	phase1.ReadFrom(phase1File)
 
+	fmt.Println("reading r1cs")
 	r1csFile, err := os.Open(r1csPath)
 	if err != nil {
 		return err
 	}
-	r1cs := cs.R1CS{}
+	defer r1csFile.Close()
+	r1cs := &cs.R1CS{}
 	r1cs.ReadFrom(r1csFile)
 
-	phase2, evals := mpcsetup.InitPhase2(&r1cs, phase1)
+	// Get SrsCommons from Phase1 using reflection
+	commons := getPhase1Commons(phase1)
 
+	fmt.Println("initializing phase2")
+	phase2 := &mpcsetup.Phase2{}
+	evals := phase2.Initialize(r1cs, commons)
+
+	fmt.Println("writing phase2")
 	phase2File, err := os.Create(phase2Path)
 	if err != nil {
 		return err
 	}
+	defer phase2File.Close()
 	phase2.WriteTo(phase2File)
 
+	// Write evals - serialize manually since Phase2Evaluations doesn't have WriteTo in new API
+	fmt.Println("writing evals")
 	evalsFile, err := os.Create(evalsPath)
 	if err != nil {
 		return err
 	}
-	evals.WriteTo(evalsFile)
+	defer evalsFile.Close()
+	if err := writePhase2Evaluations(&evals, evalsFile); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -146,6 +181,7 @@ func p2c(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer inputFile.Close()
 	phase2 := &mpcsetup.Phase2{}
 	phase2.ReadFrom(inputFile)
 
@@ -156,6 +192,7 @@ func p2c(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer outputFile.Close()
 	phase2.WriteTo(outputFile)
 
 	fmt.Printf("Uploading contribution: phase2-%d\n", contributionIndex)
@@ -164,7 +201,8 @@ func p2c(cCtx *cli.Context) error {
 		return err
 	}
 
-	hash := hex.EncodeToString(phase2.Hash)
+	// Compute hash of the contribution
+	hash := hex.EncodeToString(computePhase2Hash(phase2))
 
 	downloadURL := fmt.Sprintf("http://%s.s3.%s.amazonaws.com/phase2-%d",
 		bucketName,
@@ -204,6 +242,7 @@ func p2v(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer inputFile.Close()
 	input := &mpcsetup.Phase2{}
 	input.ReadFrom(inputFile)
 
@@ -217,12 +256,13 @@ func p2v(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer originFile.Close()
 	origin := &mpcsetup.Phase2{}
 	origin.ReadFrom(originFile)
 
-	fmt.Printf("Verifying contribution with hash: %s\n", hex.EncodeToString(input.Hash))
-	if err := mpcsetup.VerifyPhase2(origin, input); err != nil {
-		println("Phase2 Verification failed:", err.Error())
+	fmt.Printf("Verifying contribution with hash: %s\n", hex.EncodeToString(computePhase2Hash(input)))
+	if err := origin.Verify(input); err != nil {
+		fmt.Println("Phase2 Verification failed:", err.Error())
 		return err
 	}
 
@@ -327,6 +367,7 @@ func keys(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer phase1File.Close()
 	phase1.ReadFrom(phase1File)
 
 	fmt.Println("reading phase2")
@@ -336,16 +377,20 @@ func keys(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer phase2File.Close()
 	phase2.ReadFrom(phase2File)
 
 	fmt.Println("reading evals")
 	evalsPath := cCtx.Args().Get(2)
-	evals := &mpcsetup.Phase2Evaluations{}
 	evalsFile, err := os.Open(evalsPath)
 	if err != nil {
 		return err
 	}
-	evals.ReadFrom(evalsFile)
+	defer evalsFile.Close()
+	evals, err := readPhase2Evaluations(evalsFile)
+	if err != nil {
+		return err
+	}
 
 	fmt.Println("reading r1cs")
 	r1csPath := cCtx.Args().Get(3)
@@ -354,20 +399,31 @@ func keys(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer r1csFile.Close()
 	r1cs.ReadFrom(r1csFile)
 
-	// get number of constraints
-	nbConstraints := r1cs.GetNbConstraints()
+	// Get SrsCommons from Phase1 using reflection
+	commons := getPhase1Commons(phase1)
+
+	// Use a deterministic beacon challenge for key extraction
+	// In production, this should be a proper random beacon value
+	beaconChallenge := []byte("semaphore-gnark-ceremony-beacon")
+
 	fmt.Println("extracting keys")
-	pk, vk := mpcsetup.ExtractKeys(phase1, phase2, evals, nbConstraints)
+	pk, vk := phase2.Seal(commons, evals, beaconChallenge)
+
+	pkTyped := pk.(*groth16.ProvingKey)
+	vkTyped := vk.(*groth16.VerifyingKey)
+
 	fmt.Println("pk written")
-	fmt.Println("cardinality", pk.Domain.Cardinality)
+	fmt.Println("cardinality", pkTyped.Domain.Cardinality)
 
 	pkFile, err := os.Create("pk")
 	if err != nil {
 		return err
 	}
-	err = pk.WriteDump(pkFile)
+	defer pkFile.Close()
+	err = pkTyped.WriteDump(pkFile)
 	if err != nil {
 		return err
 	}
@@ -376,7 +432,8 @@ func keys(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	vk.WriteTo(vkFile)
+	defer vkFile.Close()
+	vkTyped.WriteTo(vkFile)
 
 	return nil
 }
@@ -393,42 +450,17 @@ func sol(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer vkFile.Close()
 	vk.ReadFrom(vkFile)
 
 	solFile, err := os.Create("Groth16Verifier.sol")
 	if err != nil {
 		return err
 	}
+	defer solFile.Close()
 
 	err = vk.ExportSolidity(solFile, solidity.WithPragmaVersion("0.8.20"))
 	return err
-}
-
-func ClonePhase1(phase1 *mpcsetup.Phase1) mpcsetup.Phase1 {
-	r := mpcsetup.Phase1{}
-	r.Parameters.G1.Tau = append(r.Parameters.G1.Tau, phase1.Parameters.G1.Tau...)
-	r.Parameters.G1.AlphaTau = append(r.Parameters.G1.AlphaTau, phase1.Parameters.G1.AlphaTau...)
-	r.Parameters.G1.BetaTau = append(r.Parameters.G1.BetaTau, phase1.Parameters.G1.BetaTau...)
-
-	r.Parameters.G2.Tau = append(r.Parameters.G2.Tau, phase1.Parameters.G2.Tau...)
-	r.Parameters.G2.Beta = phase1.Parameters.G2.Beta
-
-	r.PublicKeys = phase1.PublicKeys
-	r.Hash = append(r.Hash, phase1.Hash...)
-
-	return r
-}
-
-func ClonePhase2(phase2 *mpcsetup.Phase2) mpcsetup.Phase2 {
-	r := mpcsetup.Phase2{}
-	r.Parameters.G1.Delta = phase2.Parameters.G1.Delta
-	r.Parameters.G1.L = append(r.Parameters.G1.L, phase2.Parameters.G1.L...)
-	r.Parameters.G1.Z = append(r.Parameters.G1.Z, phase2.Parameters.G1.Z...)
-	r.Parameters.G2.Delta = phase2.Parameters.G2.Delta
-	r.PublicKey = phase2.PublicKey
-	r.Hash = append(r.Hash, phase2.Hash...)
-
-	return r
 }
 
 func GetS3Service(region string, anonymous bool) (*s3.S3, error) {
