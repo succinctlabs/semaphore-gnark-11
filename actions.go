@@ -166,7 +166,7 @@ func p2c(cCtx *cli.Context) error {
 
 	hash := hex.EncodeToString(phase2.Hash)
 
-	downloadURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/phase2-%d",
+	downloadURL := fmt.Sprintf("http://%s.s3.%s.amazonaws.com/phase2-%d",
 		bucketName,
 		Region,
 		contributionIndex,
@@ -221,7 +221,10 @@ func p2v(cCtx *cli.Context) error {
 	origin.ReadFrom(originFile)
 
 	fmt.Printf("Verifying contribution with hash: %s\n", hex.EncodeToString(input.Hash))
-	mpcsetup.VerifyPhase2(origin, input)
+	if err := mpcsetup.VerifyPhase2(origin, input); err != nil {
+		println("Phase2 Verification failed:", err.Error())
+		return err
+	}
 
 	fmt.Printf("Ok!\n")
 	return nil
