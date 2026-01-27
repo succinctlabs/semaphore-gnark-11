@@ -16,3 +16,4 @@ semaphore-mtb-setup-linux_amd64
 semaphore-mtb-setup-linux_arm64
 semaphore-mtb-setup-linux_arm
 build/
+trusted-setup/
