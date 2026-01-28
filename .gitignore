@@ -17,3 +17,5 @@ semaphore-mtb-setup-linux_arm64
 semaphore-mtb-setup-linux_arm
 build/
 trusted-setup/
+
+__pycache__

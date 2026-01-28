@@ -16,145 +16,32 @@ Requires:
 """
 
 import argparse
-import os
-import subprocess
 import sys
-import urllib.request
 from pathlib import Path
+
+from trusted_setup import (
+    REPO_ROOT,
+    build_binary,
+    download_ptau,
+    generate_messages,
+    generate_presigned_urls,
+    get_ptau_filename,
+    phase1_import,
+    phase2_init,
+    phase2_upload,
+)
 
 # Configuration
 NB_CONSTRAINTS_LOG2 = 24
-PTAU_URL = f"https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_{NB_CONSTRAINTS_LOG2}.ptau"
-PTAU_FILENAME = f"powersOfTau28_hez_final_{NB_CONSTRAINTS_LOG2}.ptau"
 
 # Paths
-REPO_ROOT = Path(__file__).parent.parent
 TRUSTED_SETUP_DIR = REPO_ROOT / "trusted-setup"
 MESSAGES_DIR = TRUSTED_SETUP_DIR / "messages"
-BINARY = REPO_ROOT / "semaphore-gnark-11"
 
-PTAU_PATH = TRUSTED_SETUP_DIR / PTAU_FILENAME
+PTAU_PATH = TRUSTED_SETUP_DIR / get_ptau_filename(NB_CONSTRAINTS_LOG2)
 PHASE1_PATH = TRUSTED_SETUP_DIR / "phase1"
 PHASE2_PATH = TRUSTED_SETUP_DIR / "phase2"
 EVALS_PATH = TRUSTED_SETUP_DIR / "evals"
-
-MESSAGE_TEMPLATE = """Hey, you have been chosen to perform contribution #{index} to the trusted setup!
-
-```bash
-git clone https://github.com/succinctlabs/semaphore-gnark-11.git
-cd semaphore-gnark-11
-go build
-mkdir trusted-setup
-
-./semaphore-gnark-11 p2c "{url}" {bucket_name}
-```
-
-Don't hesitate if you have any questions.
-"""
-
-
-def run_cmd(cmd: list[str], capture_output: bool = False) -> subprocess.CompletedProcess:
-    """Run a command and check for errors."""
-    print(f"Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=capture_output, text=True)
-    if result.returncode != 0:
-        if capture_output:
-            print(f"STDOUT: {result.stdout}")
-            print(f"STDERR: {result.stderr}")
-        raise RuntimeError(f"Command failed with exit code {result.returncode}")
-    return result
-
-
-def download_ptau() -> None:
-    """Download the Powers of Tau file if not present."""
-    if PTAU_PATH.exists():
-        print(f"PTAU file already exists: {PTAU_PATH}")
-        return
-
-    print(f"Downloading PTAU from {PTAU_URL}...")
-    print("(This is a large file, may take a while...)")
-    urllib.request.urlretrieve(PTAU_URL, PTAU_PATH)
-    print(f"Downloaded to {PTAU_PATH}")
-
-
-def build_binary() -> None:
-    """Build the Go binary if not present."""
-    if BINARY.exists():
-        print(f"Binary already exists: {BINARY}")
-        return
-
-    print("Building Go binary...")
-    run_cmd(["go", "build"], cwd=REPO_ROOT)
-    if not BINARY.exists():
-        raise RuntimeError(f"Binary not found after build: {BINARY}")
-
-
-def run_phase1_import() -> None:
-    """Import phase1 from PTAU file."""
-    if PHASE1_PATH.exists():
-        print(f"Phase1 already exists: {PHASE1_PATH}")
-        return
-
-    print("Importing phase1 from PTAU...")
-    run_cmd([str(BINARY), "p1i", str(PTAU_PATH), str(PHASE1_PATH)])
-
-
-def run_phase2_init(circuit_path: Path) -> None:
-    """Initialize phase2."""
-    if PHASE2_PATH.exists():
-        print(f"Phase2 already exists: {PHASE2_PATH}")
-        return
-
-    print("Initializing phase2...")
-    run_cmd([
-        str(BINARY), "p2n",
-        str(PHASE1_PATH),
-        str(circuit_path),
-        str(PHASE2_PATH),
-        str(EVALS_PATH),
-    ])
-
-
-def upload_phase2(bucket_name: str) -> None:
-    """Upload initial phase2 to S3."""
-    print(f"Uploading phase2 to S3 bucket: {bucket_name}...")
-    run_cmd([str(BINARY), "p2u", bucket_name])
-
-
-def generate_presigned_urls(bucket_name: str, count: int) -> list[tuple[int, str]]:
-    """Generate presigned URLs and parse the output."""
-    print(f"Generating {count} presigned URLs...")
-    result = run_cmd([str(BINARY), "presigned", bucket_name, str(count)], capture_output=True)
-
-    urls = []
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        # Format: "0: https://..."
-        index_str, url = line.split(": ", 1)
-        urls.append((int(index_str), url))
-
-    return urls
-
-
-def generate_messages(bucket_name: str, urls: list[tuple[int, str]]) -> None:
-    """Generate contributor message files."""
-    MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Skip index 0 (that's the initial phase2 uploaded by coordinator)
-    # Contributors get URLs for phase2-1, phase2-2, etc.
-    for index, url in urls:
-        if index == 0:
-            continue  # Index 0 is for initial upload, not a contributor
-
-        msg_path = MESSAGES_DIR / f"msg{index}.txt"
-        msg_content = MESSAGE_TEMPLATE.format(
-            index=index,
-            url=url,
-            bucket_name=bucket_name,
-        )
-        msg_path.write_text(msg_content)
-        print(f"Created: {msg_path}")
 
 
 def main() -> int:
@@ -211,14 +98,16 @@ Example:
 
     try:
         build_binary()
-        download_ptau()
-        run_phase1_import()
-        run_phase2_init(args.circuit_path)
-        upload_phase2(args.bucket_name)
+        download_ptau(PTAU_PATH, NB_CONSTRAINTS_LOG2)
+        phase1_import(PTAU_PATH, PHASE1_PATH)
+        phase2_init(PHASE1_PATH, args.circuit_path, PHASE2_PATH, EVALS_PATH)
+        phase2_upload(args.bucket_name)
 
-        # Generate presigned URLs (count + 1 because index 0 is initial upload)
-        urls = generate_presigned_urls(args.bucket_name, args.contribution_count + 1)
-        generate_messages(args.bucket_name, urls)
+        # Generate presigned URLs for each contributor
+        # URL index 0 → first contributor uploads phase2-0
+        # URL index 1 → second contributor uploads phase2-1, etc.
+        urls = generate_presigned_urls(args.bucket_name, args.contribution_count)
+        generate_messages(args.bucket_name, urls, MESSAGES_DIR)
 
         print()
         print("=" * 60)
@@ -229,7 +118,7 @@ Example:
         print("Next steps:")
         print("1. Send each contributor their message file (msg1.txt, msg2.txt, ...)")
         print("2. Wait for each contribution to complete in order")
-        print("3. Verify each contribution with: ./semaphore-gnark-11 p2v <index> <bucket>")
+        print(f"3. Verify each contribution with: ./semaphore-gnark-11 p2v <index> {args.bucket_name}")
         print("4. After all contributions, extract keys with: ./semaphore-gnark-11 key ...")
         return 0
 

@@ -1,127 +1,207 @@
 #!/usr/bin/env python3
 """
-E2E test for the trusted setup process using a small MiMC circuit.
-No S3 required - runs entirely locally.
+E2E test for the trusted setup process using a small MiMC circuit and Minio.
+
+This test:
+1. Starts Minio (local S3)
+2. Runs the full trusted setup initialization
+3. Simulates multiple contributor contributions
+4. Verifies all contributions
+5. Extracts keys
+6. Runs proof generation/verification
+
+Requires:
+- Docker and docker-compose
 """
 
-import os
+import shutil
 import subprocess
 import sys
-import urllib.request
+import time
 from pathlib import Path
 
+from trusted_setup import (
+    REPO_ROOT,
+    build_binary,
+    download_ptau,
+    extract_keys,
+    generate_presigned_urls,
+    generate_r1cs,
+    get_ptau_filename,
+    phase1_import,
+    phase2_contribute,
+    phase2_init,
+    phase2_upload,
+    phase2_verify,
+    run_cmd,
+)
+
 # Configuration
-NB_CONSTRAINTS_LOG2 = 9
-PTAU_URL = f"https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_{NB_CONSTRAINTS_LOG2:02d}.ptau"
-PTAU_FILENAME = f"powersOfTau28_hez_final_{NB_CONSTRAINTS_LOG2:02d}.ptau"
+NB_CONSTRAINTS_LOG2 = 9  # Small for testing
+NUM_CONTRIBUTIONS = 3
+BUCKET_NAME = "e2e-trusted-setup"
+
+# Minio credentials (from minio.env)
+MINIO_ENV = {
+    "AWS_ACCESS_KEY_ID": "VPP0fkoCyBZx8YU0QTjH",
+    "AWS_SECRET_ACCESS_KEY": "iFq6k8RLJw5B0faz0cKCXeQk0w9Q8UdtaFzHuw4J",
+    "CUSTOM_ENDPOINT": "http://127.0.0.1:9000/",
+}
 
 # Paths
-REPO_ROOT = Path(__file__).parent.parent
+SCRIPTS_DIR = Path(__file__).parent
 BUILD_DIR = REPO_ROOT / "build"
-BINARY = REPO_ROOT / "semaphore-gnark-11"
+TRUSTED_SETUP_DIR = REPO_ROOT / "trusted-setup"
 
-PTAU_PATH = BUILD_DIR / PTAU_FILENAME
-PHASE1_PATH = BUILD_DIR / "phase1"
-PHASE2_PATH = BUILD_DIR / "phase2"
-EVALS_PATH = BUILD_DIR / "evals"
+PTAU_PATH = BUILD_DIR / get_ptau_filename(NB_CONSTRAINTS_LOG2)
 R1CS_PATH = BUILD_DIR / "r1cs"
-PK_PATH = BUILD_DIR / "pk"
-VK_PATH = BUILD_DIR / "vk"
+
+# Phase files must be in trusted-setup/ because p2u hardcodes that path
+PHASE1_PATH = TRUSTED_SETUP_DIR / "phase1"
+PHASE2_PATH = TRUSTED_SETUP_DIR / "phase2"
+EVALS_PATH = TRUSTED_SETUP_DIR / "evals"
 
 
-def run_cmd(cmd: list[str], cwd: Path | None = None) -> None:
-    """Run a command and check for errors."""
-    print(f"Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"STDOUT: {result.stdout}")
-        print(f"STDERR: {result.stderr}")
-        raise RuntimeError(f"Command failed with exit code {result.returncode}")
-    if result.stdout:
-        print(result.stdout)
+def start_minio() -> None:
+    """Start Minio using docker-compose."""
+    print("Starting Minio...")
+    subprocess.run(
+        ["docker", "compose", "up", "-d"],
+        cwd=SCRIPTS_DIR,
+        check=True,
+    )
+    # Wait for Minio to be ready with health check
+    print("Waiting for Minio to be ready...")
+    import urllib.request
+    import urllib.error
+    for i in range(30):
+        try:
+            urllib.request.urlopen("http://127.0.0.1:9000/minio/health/live", timeout=1)
+            print("Minio is ready!")
+            return
+        except Exception:
+            time.sleep(1)
+    raise RuntimeError("Minio failed to start within 30 seconds")
 
 
-def download_ptau() -> None:
-    """Download the Powers of Tau file if not present."""
-    if PTAU_PATH.exists():
-        print(f"PTAU file already exists: {PTAU_PATH}")
-        return
-
-    print(f"Downloading PTAU from {PTAU_URL}...")
-    urllib.request.urlretrieve(PTAU_URL, PTAU_PATH)
-    print(f"Downloaded to {PTAU_PATH}")
-
-
-def build_binary() -> None:
-    """Build the Go binary if not present or outdated."""
-    print("Building Go binary...")
-    run_cmd(["go", "build"], cwd=REPO_ROOT)
-    if not BINARY.exists():
-        raise RuntimeError(f"Binary not found after build: {BINARY}")
+def stop_minio() -> None:
+    """Stop Minio."""
+    print("Stopping Minio...")
+    subprocess.run(
+        ["docker", "compose", "down"],
+        cwd=SCRIPTS_DIR,
+        check=False,
+    )
 
 
-def generate_r1cs() -> None:
-    """Generate the R1CS file by running the Go test."""
-    if R1CS_PATH.exists():
-        print(f"R1CS file already exists: {R1CS_PATH}")
-        return
-
-    print("Generating R1CS from MiMC circuit...")
-    run_cmd(["go", "test", "-v", "-run", "TestGenerateR1CS", "./test/"], cwd=REPO_ROOT)
-
-
-def run_phase1_import() -> None:
-    """Import phase1 from PTAU file."""
-    print("Importing phase1 from PTAU...")
-    run_cmd([str(BINARY), "p1i", str(PTAU_PATH), str(PHASE1_PATH)])
-
-
-def run_phase2_init() -> None:
-    """Initialize phase2."""
-    print("Initializing phase2...")
-    run_cmd([
-        str(BINARY), "p2n",
-        str(PHASE1_PATH),
-        str(R1CS_PATH),
-        str(PHASE2_PATH),
-        str(EVALS_PATH),
-    ])
-
-
-def run_e2e_contributions() -> None:
-    """Run the Go e2e test which does local contributions."""
-    print("Running Go e2e test (local contributions + key extraction + proof)...")
-    run_cmd(["go", "test", "-v", "-run", "TestEndToEnd", "./test/"], cwd=REPO_ROOT)
+def run_proof_test() -> None:
+    """Run the Go test to verify keys work for proving."""
+    print("Running proof verification test...")
+    run_cmd(["go", "test", "-v", "-run", "TestProveAndVerifyV2", "./test/"], cwd=REPO_ROOT)
 
 
 def main() -> int:
     print("=" * 60)
-    print("E2E Trusted Setup Test")
+    print("E2E Trusted Setup Test (with Minio)")
     print("=" * 60)
 
-    # Create build directory
+    # Create directories
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
-    (BUILD_DIR / "contributions").mkdir(parents=True, exist_ok=True)
+    TRUSTED_SETUP_DIR.mkdir(parents=True, exist_ok=True)
+
+    minio_started = False
 
     try:
+        # Build and prepare
         build_binary()
-        download_ptau()
-        generate_r1cs()
-        run_e2e_contributions()
+        download_ptau(PTAU_PATH, NB_CONSTRAINTS_LOG2)
+        generate_r1cs(R1CS_PATH)
+
+        # Start Minio
+        start_minio()
+        minio_started = True
+
+        # Phase 1: Import
+        phase1_import(PTAU_PATH, PHASE1_PATH, env=MINIO_ENV)
+
+        # Phase 2: Initialize
+        phase2_init(PHASE1_PATH, R1CS_PATH, PHASE2_PATH, EVALS_PATH, env=MINIO_ENV)
+
+        # Upload initial phase2 to Minio
+        phase2_upload(BUCKET_NAME, env=MINIO_ENV)
+
+        # Generate presigned URLs for contributions
+        # Need exactly NUM_CONTRIBUTIONS URLs (0 through NUM_CONTRIBUTIONS-1)
+        urls = generate_presigned_urls(BUCKET_NAME, NUM_CONTRIBUTIONS, env=MINIO_ENV)
+
+        # Make contributions
+        # URL index 0 is for first contributor (uploads phase2-0, downloads phase2)
+        # URL index 1 is for second contributor (uploads phase2-1, downloads phase2-0)
+        contribution_hashes = []
+        for index, url in urls:
+            print()
+            print(f"--- Contribution {index + 1} (phase2-{index}) ---")
+            hash_val = phase2_contribute(url, BUCKET_NAME, env=MINIO_ENV)
+            contribution_hashes.append((index, hash_val))
+            print(f"Contribution hash: {hash_val}")
+
+        # Verify all contributions
+        print()
+        print("--- Verifying contributions ---")
+        for index, _ in contribution_hashes:
+            phase2_verify(index, BUCKET_NAME, env=MINIO_ENV)
+            print(f"Contribution {index} verified!")
+
+        # Download final contribution and extract keys
+        print()
+        print("--- Extracting keys ---")
+        final_index = NUM_CONTRIBUTIONS - 1
+        final_phase2_path = TRUSTED_SETUP_DIR / f"phase2-{final_index}"
+
+        # Download the final phase2 file
+        run_cmd([
+            "curl", "-o", str(final_phase2_path),
+            f"http://127.0.0.1:9000/{BUCKET_NAME}/phase2-{final_index}",
+        ])
+
+        extract_keys(PHASE1_PATH, final_phase2_path, EVALS_PATH, R1CS_PATH, env=MINIO_ENV)
+
+        # Move generated keys to build dir (for TestProveAndVerifyV2)
+        if (REPO_ROOT / "pk").exists():
+            shutil.copy(REPO_ROOT / "pk", BUILD_DIR / "pk")
+        if (REPO_ROOT / "vk").exists():
+            shutil.copy(REPO_ROOT / "vk", BUILD_DIR / "vk")
+
+        # Verify keys work
+        print()
+        print("--- Testing proof generation ---")
+        run_proof_test()
 
         print()
         print("=" * 60)
         print("E2E test PASSED!")
         print("=" * 60)
         print(f"Artifacts in {BUILD_DIR}:")
-        for f in BUILD_DIR.iterdir():
+        for f in sorted(BUILD_DIR.iterdir()):
             if f.is_file():
                 print(f"  - {f.name}")
+
+        print()
+        print("Contributions:")
+        for index, hash_val in contribution_hashes:
+            print(f"  - phase2-{index}: {hash_val}")
+
         return 0
 
     except Exception as e:
         print(f"\nE2E test FAILED: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
+
+    finally:
+        if minio_started:
+            stop_minio()
 
 
 if __name__ == "__main__":
