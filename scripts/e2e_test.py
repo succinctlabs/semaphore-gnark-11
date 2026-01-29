@@ -105,7 +105,11 @@ def main() -> int:
     print("E2E Trusted Setup Test (with Minio)")
     print("=" * 60)
 
-    # Create directories
+    # Clear and create directories
+    if BUILD_DIR.exists():
+        shutil.rmtree(BUILD_DIR)
+    if TRUSTED_SETUP_DIR.exists():
+        shutil.rmtree(TRUSTED_SETUP_DIR)
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     TRUSTED_SETUP_DIR.mkdir(parents=True, exist_ok=True)
 

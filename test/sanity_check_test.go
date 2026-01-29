@@ -8,6 +8,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 
 	"github.com/consensys/gnark/backend/groth16"
+	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/consensys/gnark/std/hash/mimc"
@@ -35,14 +36,14 @@ func TestProveAndVerifyV2(t *testing.T) {
 		t.Error(err)
 	}
 
-	// Read PK and VK
-	pkk := groth16.NewProvingKey(ecc.BN254)
+	// Read PK (WriteDump format) and VK
+	pkk := &groth16_bn254.ProvingKey{}
 	pkFile, _ := os.Open("../build/pk")
 	defer pkFile.Close()
+	pkk.ReadDump(pkFile)
+	vkk := groth16.NewVerifyingKey(ecc.BN254)
 	vkFile, _ := os.Open("../build/vk")
 	defer vkFile.Close()
-	pkk.ReadFrom(pkFile)
-	vkk := groth16.NewVerifyingKey(ecc.BN254)
 	vkk.ReadFrom(vkFile)
 
 	assignment := &Circuit{
