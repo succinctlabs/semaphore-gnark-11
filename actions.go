@@ -207,8 +207,17 @@ func p2v(cCtx *cli.Context) error {
 	input := &mpcsetup.Phase2{}
 	input.ReadFrom(inputFile)
 
-	fmt.Printf("Downloading phase2\n")
-	originPath, err := Download(svc, "phase2", bucketName)
+	originKey := "phase2"
+	idx, err := strconv.Atoi(contributionIndex)
+	if err != nil {
+		return err
+	}
+	if idx > 0 {
+		originKey = fmt.Sprintf("phase2-%d", idx-1)
+	}
+
+	fmt.Printf("Downloading origin: %s\n", originKey)
+	originPath, err := Download(svc, originKey, bucketName)
 	if err != nil {
 		return err
 	}
@@ -367,7 +376,7 @@ func keys(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	err = pk.WriteDump(pkFile)
+	_, err = pk.WriteTo(pkFile)
 	if err != nil {
 		return err
 	}
