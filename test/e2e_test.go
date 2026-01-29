@@ -140,7 +140,7 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	pkTyped.WriteTo(pkFile)
+	pk.WriteDump(pkFile)
 	pkFile.Close()
 
 	vkFile, err := os.Create(config.VkOutputPath)
