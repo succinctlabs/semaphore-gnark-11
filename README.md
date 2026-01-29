@@ -83,7 +83,7 @@ Ok!
 
 - Go 1.23+
 - Docker and docker-compose (for the e2e test)
-- Python 3.10+ (for the e2e test)
+- Python 3.10+ and [uv](https://github.com/astral-sh/uv) (for the e2e test)
 
 ### Unit tests (Go)
 
@@ -99,6 +99,7 @@ The e2e test exercises the full deployment pipeline — builds the CLI binary, s
 
 ```bash
 cd scripts
+uv pip install -r requirements.txt
 python3 e2e_test.py
 ```
 

@@ -10,11 +10,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strconv"
 	"time"
-	"unsafe"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -24,18 +22,12 @@ import (
 	"github.com/consensys/gnark/backend/groth16/bn254/mpcsetup"
 	"github.com/consensys/gnark/backend/solidity"
 	cs "github.com/consensys/gnark/constraint/bn254"
+	"github.com/mattstam/semaphore-gnark-11/drand"
 	"github.com/urfave/cli/v2"
 	deserializer "github.com/worldcoin/ptau-deserializer/deserialize"
 )
 
 const Region = "us-west-1"
-
-// getPhase1Commons extracts the unexported SrsCommons from Phase1 using reflection
-func getPhase1Commons(phase1 *mpcsetup.Phase1) *mpcsetup.SrsCommons {
-	v := reflect.ValueOf(phase1).Elem()
-	params := v.FieldByName("parameters")
-	return (*mpcsetup.SrsCommons)(unsafe.Pointer(params.UnsafeAddr()))
-}
 
 // computePhase2Hash computes the hash of a Phase2 by serializing and hashing
 func computePhase2Hash(phase2 *mpcsetup.Phase2) ([]byte, error) {
@@ -45,6 +37,30 @@ func computePhase2Hash(phase2 *mpcsetup.Phase2) ([]byte, error) {
 	}
 	h := sha256.Sum256(buf.Bytes())
 	return h[:], nil
+}
+
+func beaconFromContext(cCtx *cli.Context, roundFlag string, envRound string) ([]byte, uint64, error) {
+	if round := cCtx.Uint64(roundFlag); round != 0 {
+		beacon, err := drand.RandomnessFromRound(round)
+		if err != nil {
+			return nil, 0, err
+		}
+		return beacon, round, nil
+	}
+
+	if roundStr := os.Getenv(envRound); roundStr != "" {
+		round, err := strconv.ParseUint(roundStr, 10, 64)
+		if err != nil {
+			return nil, 0, fmt.Errorf("invalid %s: %w", envRound, err)
+		}
+		beacon, err := drand.RandomnessFromRound(round)
+		if err != nil {
+			return nil, 0, err
+		}
+		return beacon, round, nil
+	}
+
+	return nil, 0, fmt.Errorf("missing drand round: set --%s or %s", roundFlag, envRound)
 }
 
 func p1i(cCtx *cli.Context) error {
@@ -112,14 +128,21 @@ func p2n(cCtx *cli.Context) error {
 		return fmt.Errorf("reading r1cs: %w", err)
 	}
 
-	// Get SrsCommons from Phase1 using reflection.
-	// We cannot use phase1.Seal(beacon) because Phase1 was imported from an
-	// existing PTAU ceremony and does not need a beacon contribution.
-	commons := getPhase1Commons(phase1)
+	beacon, round, err := beaconFromContext(cCtx, "beacon-round", "DRAND_PHASE1_ROUND")
+	if err != nil {
+		return err
+	}
+	if round != 0 {
+		fmt.Printf("using drand round %d for phase1 beacon\n", round)
+	} else {
+		fmt.Println("using provided phase1 beacon hex")
+	}
+
+	commons := phase1.Seal(beacon)
 
 	fmt.Println("initializing phase2")
 	phase2 := &mpcsetup.Phase2{}
-	evals := phase2.Initialize(r1cs, commons)
+	evals := phase2.Initialize(r1cs, &commons)
 
 	fmt.Println("writing phase2")
 	phase2File, err := os.Create(phase2Path)
@@ -444,15 +467,29 @@ func keys(cCtx *cli.Context) error {
 		return fmt.Errorf("reading r1cs: %w", err)
 	}
 
-	// Get SrsCommons from Phase1 using reflection
-	commons := getPhase1Commons(phase1)
+	phase1Beacon, phase1Round, err := beaconFromContext(cCtx, "phase1-beacon-round", "DRAND_PHASE1_ROUND")
+	if err != nil {
+		return err
+	}
+	if phase1Round != 0 {
+		fmt.Printf("using drand round %d for phase1 beacon\n", phase1Round)
+	} else {
+		fmt.Println("using provided phase1 beacon hex")
+	}
 
-	// Use a deterministic beacon challenge for key extraction
-	// In production, this should be a proper random beacon value
-	beaconChallenge := []byte("semaphore-gnark-ceremony-beacon")
+	phase2Beacon, phase2Round, err := beaconFromContext(cCtx, "phase2-beacon-round", "DRAND_PHASE2_ROUND")
+	if err != nil {
+		return err
+	}
+	if phase2Round != 0 {
+		fmt.Printf("using drand round %d for phase2 beacon\n", phase2Round)
+	} else {
+		fmt.Println("using provided phase2 beacon hex")
+	}
 
 	fmt.Println("extracting keys")
-	pk, vk := phase2.Seal(commons, evals, beaconChallenge)
+	commons := phase1.Seal(phase1Beacon)
+	pk, vk := phase2.Seal(&commons, evals, phase2Beacon)
 
 	pkTyped := pk.(*groth16.ProvingKey)
 	vkTyped := vk.(*groth16.VerifyingKey)

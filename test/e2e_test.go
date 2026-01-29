@@ -2,10 +2,8 @@ package test
 
 import (
 	"os"
-	"reflect"
 	"strconv"
 	"testing"
-	"unsafe"
 
 	curve "github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -15,6 +13,7 @@ import (
 	"github.com/consensys/gnark/backend/groth16/bn254/mpcsetup"
 	cs "github.com/consensys/gnark/constraint/bn254"
 	"github.com/consensys/gnark/frontend"
+	"github.com/mattstam/semaphore-gnark-11/drand"
 	deserializer "github.com/worldcoin/ptau-deserializer/deserialize"
 )
 
@@ -31,14 +30,19 @@ type Config struct {
 	Power                             int
 }
 
-// getPhase1Commons extracts the unexported SrsCommons from Phase1 using reflection
-func getPhase1Commons(phase1 *mpcsetup.Phase1) *mpcsetup.SrsCommons {
-	v := reflect.ValueOf(phase1).Elem()
-	params := v.FieldByName("parameters")
-	return (*mpcsetup.SrsCommons)(unsafe.Pointer(params.UnsafeAddr()))
+func beaconForTest(t *testing.T, round uint64) []byte {
+	t.Helper()
+	beacon, err := drand.RandomnessFromRound(round)
+	if err != nil {
+		t.Fatalf("fetch drand round %d: %v", round, err)
+	}
+	return beacon
 }
 
 func TestEndToEnd(t *testing.T) {
+	const phase1Round = uint64(1000)
+	const phase2Round = uint64(2000)
+
 	config := Config{
 		PtauPath:                          "../build/powersOfTau28_hez_final_09.ptau",
 		Phase1OutputPath:                  "../build/phase1",
@@ -78,22 +82,19 @@ func TestEndToEnd(t *testing.T) {
 		panic(err)
 	}
 
-	// Get SrsCommons from Phase1 using reflection
-	commons := getPhase1Commons(&phase1)
+	phase1Beacon := beaconForTest(t, phase1Round)
+	phase2Beacon := beaconForTest(t, phase2Round)
+	commons := phase1.Seal(phase1Beacon)
 
 	// Initialize Phase2
 	phase2 := &mpcsetup.Phase2{}
-	evals := phase2.Initialize(&r1cs, commons)
+	evals := phase2.Initialize(&r1cs, &commons)
 
 	phase2File, err := os.Create(config.Phase2OutputPath)
 	if err != nil {
 		panic(err)
 	}
 	phase2.WriteTo(phase2File)
-
-	// Store initial phase2 for verification
-	initialPhase2 := &mpcsetup.Phase2{}
-	initialPhase2.Initialize(&r1cs, commons)
 
 	for i := 0; i < config.NContributionsPhase2; i++ {
 		// Read the previous contribution
@@ -128,10 +129,7 @@ func TestEndToEnd(t *testing.T) {
 		phase2File.Close()
 	}
 
-	// Use a deterministic beacon challenge for key extraction
-	beaconChallenge := []byte("test-beacon-challenge")
-
-	pk, vk := phase2.Seal(commons, &evals, beaconChallenge)
+	pk, vk := phase2.Seal(&commons, &evals, phase2Beacon)
 
 	pkTyped := pk.(*groth16Impl.ProvingKey)
 	vkTyped := vk.(*groth16Impl.VerifyingKey)

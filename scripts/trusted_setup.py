@@ -80,9 +80,9 @@ def download_ptau(ptau_path: Path, log2: int) -> None:
     print(f"Downloaded to {ptau_path}")
 
 
-def build_binary() -> None:
-    """Build the Go binary if not present."""
-    if BINARY.exists():
+def build_binary(force: bool = False) -> None:
+    """Build the Go binary if not present (or force rebuild)."""
+    if BINARY.exists() and not force:
         print(f"Binary already exists: {BINARY}")
         return
 
@@ -117,6 +117,7 @@ def phase2_init(
     circuit_path: Path,
     phase2_path: Path,
     evals_path: Path,
+    beacon_round: int,
     env: dict | None = None,
 ) -> None:
     """Initialize phase2."""
@@ -124,14 +125,19 @@ def phase2_init(
         print(f"Phase2 already exists: {phase2_path}")
         return
 
+    if beacon_round <= 0:
+        raise ValueError("beacon_round must be set to a positive drand round")
+
     print("Initializing phase2...")
-    run_cmd([
-        str(BINARY), "p2n",
+    cmd = [str(BINARY), "p2n"]
+    cmd.extend(["--beacon-round", str(beacon_round)])
+    cmd.extend([
         str(phase1_path),
         str(circuit_path),
         str(phase2_path),
         str(evals_path),
-    ], env=env)
+    ])
+    run_cmd(cmd, env=env)
 
 
 def phase2_upload(bucket_name: str, env: dict | None = None) -> None:
@@ -191,20 +197,28 @@ def extract_keys(
     phase2_path: Path,
     evals_path: Path,
     circuit_path: Path,
+    phase1_beacon_round: int,
+    phase2_beacon_round: int,
     env: dict | None = None,
 ) -> None:
     """Extract proving and verifying keys.
 
     Keys are output to current working directory (pk, vk files).
     """
+    if phase1_beacon_round <= 0 or phase2_beacon_round <= 0:
+        raise ValueError("phase1_beacon_round and phase2_beacon_round must be set to positive drand rounds")
+
     print("Extracting keys...")
-    run_cmd([
-        str(BINARY), "key",
+    cmd = [str(BINARY), "key"]
+    cmd.extend(["--phase1-beacon-round", str(phase1_beacon_round)])
+    cmd.extend(["--phase2-beacon-round", str(phase2_beacon_round)])
+    cmd.extend([
         str(phase1_path),
         str(phase2_path),
         str(evals_path),
         str(circuit_path),
-    ], cwd=REPO_ROOT, env=env)
+    ])
+    run_cmd(cmd, cwd=REPO_ROOT, env=env)
 
 
 def generate_messages(bucket_name: str, urls: list[tuple[int, str]], messages_dir: Path) -> None:
