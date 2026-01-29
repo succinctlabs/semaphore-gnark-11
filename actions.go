@@ -376,7 +376,7 @@ func keys(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	err = pkTyped.WriteDump(pkFile)
+	err = pk.WriteDump(pkFile)
 	if err != nil {
 		return err
 	}

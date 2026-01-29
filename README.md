@@ -77,6 +77,42 @@ Verifying contribution with hash: db0fbfa74ace3839c07d63041355754131dbfaececfbf6
 Ok!
 ```
 
+## Testing
+
+### Requirements
+
+- Go 1.23+
+- Docker and docker-compose (for the e2e test)
+- Python 3.10+ (for the e2e test)
+
+### Unit tests (Go)
+
+The Go test suite runs the trusted setup pipeline in-process (no S3, no Docker):
+
+```bash
+# Generate the R1CS (must run first)
+go test -v -run TestGenerateR1CS ./test/
+
+# Run the full in-process trusted setup (requires PTAU file in build/)
+go test -v -run TestEndToEnd ./test/
+
+# Prove and verify using extracted keys (requires TestEndToEnd artifacts)
+go test -v -run TestProveAndVerifyV2 ./test/
+```
+
+Note: `TestEndToEnd` requires `build/powersOfTau28_hez_final_09.ptau` and `build/contributions/` to exist. The PTAU file can be downloaded from https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_09.ptau.
+
+### E2E test (Python)
+
+The e2e test exercises the full deployment pipeline — builds the CLI binary, starts a local Minio (S3) instance, runs contributions via presigned URLs, verifies them, extracts keys, and generates a proof:
+
+```bash
+cd scripts
+python3 e2e_test.py
+```
+
+This test clears `build/` and `trusted-setup/` at the start of each run.
+
 ## Acknowledgements
 
 This repository is a fork of the [zkbnb-setup](https://github.com/bnb-chain/zkbnb-setup/) repository. We would like to thank the authors of the original repository for their work as this project is a slight tweak of the original work to fit our needs.
