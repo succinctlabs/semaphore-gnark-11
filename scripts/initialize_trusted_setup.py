@@ -53,7 +53,9 @@ Example:
     python scripts/initialize_trusted_setup.py \\
         --bucket-name my-trusted-setup-bucket \\
         --circuit-path /path/to/circuit.bin \\
-        --contribution-count 5
+        --contribution-count 5 \\
+        --phase1-beacon-round 1234567 \\
+        --phase2-beacon-round 1235567
         """,
     )
     parser.add_argument(
@@ -73,6 +75,18 @@ Example:
         type=int,
         help="Number of expected contributions",
     )
+    parser.add_argument(
+        "--phase1-beacon-round",
+        required=True,
+        type=int,
+        help="Drand round number for the Phase1 beacon",
+    )
+    parser.add_argument(
+        "--phase2-beacon-round",
+        required=True,
+        type=int,
+        help="Drand round number for the Phase2 beacon",
+    )
 
     args = parser.parse_args()
 
@@ -84,12 +98,18 @@ Example:
         print("Error: Contribution count must be at least 1")
         return 1
 
+    if args.phase1_beacon_round <= 0 or args.phase2_beacon_round <= 0:
+        print("Error: Beacon rounds must be positive drand round numbers")
+        return 1
+
     print("=" * 60)
     print("Trusted Setup Initialization")
     print("=" * 60)
     print(f"Bucket: {args.bucket_name}")
     print(f"Circuit: {args.circuit_path}")
     print(f"Contributors: {args.contribution_count}")
+    print(f"Phase1 beacon round: {args.phase1_beacon_round}")
+    print(f"Phase2 beacon round: {args.phase2_beacon_round}")
     print("=" * 60)
 
     # Create directories
@@ -100,7 +120,13 @@ Example:
         build_binary()
         download_ptau(PTAU_PATH, NB_CONSTRAINTS_LOG2)
         phase1_import(PTAU_PATH, PHASE1_PATH)
-        phase2_init(PHASE1_PATH, args.circuit_path, PHASE2_PATH, EVALS_PATH)
+        phase2_init(
+            PHASE1_PATH,
+            args.circuit_path,
+            PHASE2_PATH,
+            EVALS_PATH,
+            beacon_round=args.phase1_beacon_round,
+        )
         phase2_upload(args.bucket_name)
 
         # Generate presigned URLs for each contributor

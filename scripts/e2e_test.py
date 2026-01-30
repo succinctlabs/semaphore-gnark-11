@@ -20,6 +20,8 @@ import sys
 import time
 from pathlib import Path
 
+from dotenv import dotenv_values
+
 from trusted_setup import (
     REPO_ROOT,
     build_binary,
@@ -39,14 +41,6 @@ from trusted_setup import (
 # Configuration
 NB_CONSTRAINTS_LOG2 = 9  # Small for testing
 NUM_CONTRIBUTIONS = 3
-BUCKET_NAME = "e2e-trusted-setup"
-
-# Minio credentials (from minio.env)
-MINIO_ENV = {
-    "AWS_ACCESS_KEY_ID": "VPP0fkoCyBZx8YU0QTjH",
-    "AWS_SECRET_ACCESS_KEY": "iFq6k8RLJw5B0faz0cKCXeQk0w9Q8UdtaFzHuw4J",
-    "CUSTOM_ENDPOINT": "http://127.0.0.1:9000/",
-}
 
 # Paths
 SCRIPTS_DIR = Path(__file__).parent
@@ -60,6 +54,21 @@ R1CS_PATH = BUILD_DIR / "r1cs"
 PHASE1_PATH = TRUSTED_SETUP_DIR / "phase1"
 PHASE2_PATH = TRUSTED_SETUP_DIR / "phase2"
 EVALS_PATH = TRUSTED_SETUP_DIR / "evals"
+
+# Drand rounds for reproducible E2E
+PHASE1_BEACON_ROUND = 1000
+PHASE2_BEACON_ROUND = 2000
+
+
+MINIO_FILE_ENV = dotenv_values(SCRIPTS_DIR / "minio.env")
+BUCKET_NAME = MINIO_FILE_ENV.get("BUCKET_NAME", "e2e-trusted-setup")
+
+# Minio credentials (from minio.env)
+MINIO_ENV = {
+    "AWS_ACCESS_KEY_ID": MINIO_FILE_ENV.get("ACCESS_KEY", ""),
+    "AWS_SECRET_ACCESS_KEY": MINIO_FILE_ENV.get("SECRET_KEY", ""),
+    "CUSTOM_ENDPOINT": "http://127.0.0.1:9000/",
+}
 
 
 def start_minio() -> None:
@@ -105,6 +114,9 @@ def main() -> int:
     print("E2E Trusted Setup Test (with Minio)")
     print("=" * 60)
 
+    if not MINIO_ENV["AWS_ACCESS_KEY_ID"] or not MINIO_ENV["AWS_SECRET_ACCESS_KEY"]:
+        raise RuntimeError("minio.env missing ACCESS_KEY or SECRET_KEY")
+
     # Clear and create directories
     if BUILD_DIR.exists():
         shutil.rmtree(BUILD_DIR)
@@ -117,7 +129,7 @@ def main() -> int:
 
     try:
         # Build and prepare
-        build_binary()
+        build_binary(force=True)
         download_ptau(PTAU_PATH, NB_CONSTRAINTS_LOG2)
         generate_r1cs(R1CS_PATH)
 
@@ -129,7 +141,14 @@ def main() -> int:
         phase1_import(PTAU_PATH, PHASE1_PATH, env=MINIO_ENV)
 
         # Phase 2: Initialize
-        phase2_init(PHASE1_PATH, R1CS_PATH, PHASE2_PATH, EVALS_PATH, env=MINIO_ENV)
+        phase2_init(
+            PHASE1_PATH,
+            R1CS_PATH,
+            PHASE2_PATH,
+            EVALS_PATH,
+            beacon_round=PHASE1_BEACON_ROUND,
+            env=MINIO_ENV,
+        )
 
         # Upload initial phase2 to Minio
         phase2_upload(BUCKET_NAME, env=MINIO_ENV)
@@ -168,7 +187,15 @@ def main() -> int:
             f"http://127.0.0.1:9000/{BUCKET_NAME}/phase2-{final_index}",
         ])
 
-        extract_keys(PHASE1_PATH, final_phase2_path, EVALS_PATH, R1CS_PATH, env=MINIO_ENV)
+        extract_keys(
+            PHASE1_PATH,
+            final_phase2_path,
+            EVALS_PATH,
+            R1CS_PATH,
+            phase1_beacon_round=PHASE1_BEACON_ROUND,
+            phase2_beacon_round=PHASE2_BEACON_ROUND,
+            env=MINIO_ENV,
+        )
 
         # Move generated keys to build dir (for TestProveAndVerifyV2)
         if (REPO_ROOT / "pk").exists():

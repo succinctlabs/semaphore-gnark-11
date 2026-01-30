@@ -27,6 +27,12 @@ func main() {
 				Usage:       "p2n <inputPh1> <inputR1cs> <outputPh2> <outputEvals>",
 				Description: "initialize phase 2 for the given circuit",
 				Action:      p2n,
+				Flags: []cli.Flag{
+					&cli.Uint64Flag{
+						Name:  "beacon-round",
+						Usage: "drand round number for the phase1 beacon (env DRAND_PHASE1_ROUND)",
+					},
+				},
 			},
 			/* ----------------------------- Phase 2 Upload to S3 ----------------------- */
 			{
@@ -62,6 +68,16 @@ func main() {
 				Usage:       "key <phase1Path> <phase2Path> <phase2EvalsPath> <r1csPath>",
 				Description: "extract proving and verifying keys",
 				Action:      keys,
+				Flags: []cli.Flag{
+					&cli.Uint64Flag{
+						Name:  "phase1-beacon-round",
+						Usage: "drand round number for the phase1 beacon (env DRAND_PHASE1_ROUND)",
+					},
+					&cli.Uint64Flag{
+						Name:  "phase2-beacon-round",
+						Usage: "drand round number for the phase2 beacon (env DRAND_PHASE2_ROUND)",
+					},
+				},
 			},
 			{
 				Name:        "sol",

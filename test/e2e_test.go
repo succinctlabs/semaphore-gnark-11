@@ -9,9 +9,11 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	native_mimc "github.com/consensys/gnark-crypto/ecc/bn254/fr/mimc"
 	"github.com/consensys/gnark/backend/groth16"
+	groth16Impl "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/backend/groth16/bn254/mpcsetup"
 	cs "github.com/consensys/gnark/constraint/bn254"
 	"github.com/consensys/gnark/frontend"
+	"github.com/mattstam/semaphore-gnark-11/drand"
 	deserializer "github.com/worldcoin/ptau-deserializer/deserialize"
 )
 
@@ -28,7 +30,19 @@ type Config struct {
 	Power                             int
 }
 
+func beaconForTest(t *testing.T, round uint64) []byte {
+	t.Helper()
+	beacon, err := drand.RandomnessFromRound(round)
+	if err != nil {
+		t.Fatalf("fetch drand round %d: %v", round, err)
+	}
+	return beacon
+}
+
 func TestEndToEnd(t *testing.T) {
+	const phase1Round = uint64(1000)
+	const phase2Round = uint64(2000)
+
 	config := Config{
 		PtauPath:                          "../build/powersOfTau28_hez_final_09.ptau",
 		Phase1OutputPath:                  "../build/phase1",
@@ -68,7 +82,13 @@ func TestEndToEnd(t *testing.T) {
 		panic(err)
 	}
 
-	phase2, evals := mpcsetup.InitPhase2(&r1cs, &phase1)
+	phase1Beacon := beaconForTest(t, phase1Round)
+	phase2Beacon := beaconForTest(t, phase2Round)
+	commons := phase1.Seal(phase1Beacon)
+
+	// Initialize Phase2
+	phase2 := &mpcsetup.Phase2{}
+	evals := phase2.Initialize(&r1cs, &commons)
 
 	phase2File, err := os.Create(config.Phase2OutputPath)
 	if err != nil {
@@ -76,25 +96,43 @@ func TestEndToEnd(t *testing.T) {
 	}
 	phase2.WriteTo(phase2File)
 
-	evalsFile, err := os.Create(config.EvalsOutputPath)
-	if err != nil {
-		panic(err)
-	}
-	evals.WriteTo(evalsFile)
-
 	for i := 0; i < config.NContributionsPhase2; i++ {
-		prev := ClonePhase2(&phase2)
+		// Read the previous contribution
+		prevFile, err := os.Open(config.Phase2OutputPath)
+		if err != nil {
+			panic(err)
+		}
+		prev := &mpcsetup.Phase2{}
+		prev.ReadFrom(prevFile)
+		prevFile.Close()
+
 		phase2.Contribute()
-		mpcsetup.VerifyPhase2(&prev, &phase2)
+
+		// Verify the contribution
+		if err := prev.Verify(phase2); err != nil {
+			panic(err)
+		}
+
 		phase2WithContributionFile, err := os.Create(config.Phase2WithContributionsOutputPath + "/contribution-" + strconv.Itoa(i))
 		if err != nil {
 			panic(err)
 		}
 		phase2.WriteTo(phase2WithContributionFile)
 		phase2WithContributionFile.Close()
+
+		// Update phase2 file for next iteration
+		phase2File, err := os.Create(config.Phase2OutputPath)
+		if err != nil {
+			panic(err)
+		}
+		phase2.WriteTo(phase2File)
+		phase2File.Close()
 	}
 
-	pk, vk := mpcsetup.ExtractKeys(&phase1, &phase2, &evals, r1cs.GetNbConstraints())
+	pk, vk := phase2.Seal(&commons, &evals, phase2Beacon)
+
+	pkTyped := pk.(*groth16Impl.ProvingKey)
+	vkTyped := vk.(*groth16Impl.VerifyingKey)
 
 	pkFile, err := os.Create(config.PkOutputPath)
 	if err != nil {
@@ -107,7 +145,7 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	vk.WriteTo(vkFile)
+	vkTyped.WriteTo(vkFile)
 	vkFile.Close()
 
 	// Build the witness
@@ -129,12 +167,12 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	// groth16: ensure proof is verified
-	proof, err := groth16.Prove(&r1cs, &pk, witness)
+	proof, err := groth16.Prove(&r1cs, pkTyped, witness)
 	if err != nil {
 		panic(err)
 	}
 
-	err = groth16.Verify(proof, &vk, pubWitness)
+	err = groth16.Verify(proof, vkTyped, pubWitness)
 	if err != nil {
 		panic(err)
 	}

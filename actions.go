@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -20,11 +22,46 @@ import (
 	"github.com/consensys/gnark/backend/groth16/bn254/mpcsetup"
 	"github.com/consensys/gnark/backend/solidity"
 	cs "github.com/consensys/gnark/constraint/bn254"
+	"github.com/mattstam/semaphore-gnark-11/drand"
 	"github.com/urfave/cli/v2"
 	deserializer "github.com/worldcoin/ptau-deserializer/deserialize"
 )
 
 const Region = "us-west-1"
+
+// computePhase2Hash computes the hash of a Phase2 by serializing and hashing
+func computePhase2Hash(phase2 *mpcsetup.Phase2) ([]byte, error) {
+	var buf bytes.Buffer
+	if _, err := phase2.WriteTo(&buf); err != nil {
+		return nil, fmt.Errorf("serializing phase2 for hash: %w", err)
+	}
+	h := sha256.Sum256(buf.Bytes())
+	return h[:], nil
+}
+
+func beaconFromContext(cCtx *cli.Context, roundFlag string, envRound string) ([]byte, uint64, error) {
+	if round := cCtx.Uint64(roundFlag); round != 0 {
+		beacon, err := drand.RandomnessFromRound(round)
+		if err != nil {
+			return nil, 0, err
+		}
+		return beacon, round, nil
+	}
+
+	if roundStr := os.Getenv(envRound); roundStr != "" {
+		round, err := strconv.ParseUint(roundStr, 10, 64)
+		if err != nil {
+			return nil, 0, fmt.Errorf("invalid %s: %w", envRound, err)
+		}
+		beacon, err := drand.RandomnessFromRound(round)
+		if err != nil {
+			return nil, 0, err
+		}
+		return beacon, round, nil
+	}
+
+	return nil, 0, fmt.Errorf("missing drand round: set --%s or %s", roundFlag, envRound)
+}
 
 func p1i(cCtx *cli.Context) error {
 	// sanity check
@@ -49,6 +86,7 @@ func p1i(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer outputFile.Close()
 
 	_, err = phase1.WriteTo(outputFile)
 	if err != nil {
@@ -68,33 +106,64 @@ func p2n(cCtx *cli.Context) error {
 	phase2Path := cCtx.Args().Get(2)
 	evalsPath := cCtx.Args().Get(3)
 
+	fmt.Println("reading phase1")
 	phase1File, err := os.Open(phase1Path)
 	if err != nil {
 		return err
 	}
+	defer phase1File.Close()
 	phase1 := &mpcsetup.Phase1{}
-	phase1.ReadFrom(phase1File)
+	if _, err := phase1.ReadFrom(phase1File); err != nil {
+		return fmt.Errorf("reading phase1: %w", err)
+	}
 
+	fmt.Println("reading r1cs")
 	r1csFile, err := os.Open(r1csPath)
 	if err != nil {
 		return err
 	}
-	r1cs := cs.R1CS{}
-	r1cs.ReadFrom(r1csFile)
+	defer r1csFile.Close()
+	r1cs := &cs.R1CS{}
+	if _, err := r1cs.ReadFrom(r1csFile); err != nil {
+		return fmt.Errorf("reading r1cs: %w", err)
+	}
 
-	phase2, evals := mpcsetup.InitPhase2(&r1cs, phase1)
+	beacon, round, err := beaconFromContext(cCtx, "beacon-round", "DRAND_PHASE1_ROUND")
+	if err != nil {
+		return err
+	}
+	if round != 0 {
+		fmt.Printf("using drand round %d for phase1 beacon\n", round)
+	} else {
+		fmt.Println("using provided phase1 beacon hex")
+	}
 
+	commons := phase1.Seal(beacon)
+
+	fmt.Println("initializing phase2")
+	phase2 := &mpcsetup.Phase2{}
+	evals := phase2.Initialize(r1cs, &commons)
+
+	fmt.Println("writing phase2")
 	phase2File, err := os.Create(phase2Path)
 	if err != nil {
 		return err
 	}
-	phase2.WriteTo(phase2File)
+	defer phase2File.Close()
+	if _, err := phase2.WriteTo(phase2File); err != nil {
+		return fmt.Errorf("writing phase2: %w", err)
+	}
 
+	// Write evals - serialize manually since Phase2Evaluations doesn't have WriteTo in new API
+	fmt.Println("writing evals")
 	evalsFile, err := os.Create(evalsPath)
 	if err != nil {
 		return err
 	}
-	evals.WriteTo(evalsFile)
+	defer evalsFile.Close()
+	if err := writePhase2Evaluations(&evals, evalsFile); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -146,8 +215,11 @@ func p2c(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer inputFile.Close()
 	phase2 := &mpcsetup.Phase2{}
-	phase2.ReadFrom(inputFile)
+	if _, err := phase2.ReadFrom(inputFile); err != nil {
+		return fmt.Errorf("reading phase2: %w", err)
+	}
 
 	fmt.Printf("Generating contribution\n")
 	phase2.Contribute()
@@ -156,7 +228,10 @@ func p2c(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	phase2.WriteTo(outputFile)
+	defer outputFile.Close()
+	if _, err := phase2.WriteTo(outputFile); err != nil {
+		return fmt.Errorf("writing phase2: %w", err)
+	}
 
 	fmt.Printf("Uploading contribution: phase2-%d\n", contributionIndex)
 	err = Upload(outputPh2Path, presignedUploadUrl)
@@ -164,7 +239,12 @@ func p2c(cCtx *cli.Context) error {
 		return err
 	}
 
-	hash := hex.EncodeToString(phase2.Hash)
+	// Compute hash of the contribution
+	hashBytes, err := computePhase2Hash(phase2)
+	if err != nil {
+		return err
+	}
+	hash := hex.EncodeToString(hashBytes)
 
 	downloadURL := fmt.Sprintf("http://%s.s3.%s.amazonaws.com/phase2-%d",
 		bucketName,
@@ -204,8 +284,11 @@ func p2v(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer inputFile.Close()
 	input := &mpcsetup.Phase2{}
-	input.ReadFrom(inputFile)
+	if _, err := input.ReadFrom(inputFile); err != nil {
+		return fmt.Errorf("reading contribution: %w", err)
+	}
 
 	originKey := "phase2"
 	idx, err := strconv.Atoi(contributionIndex)
@@ -226,12 +309,19 @@ func p2v(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer originFile.Close()
 	origin := &mpcsetup.Phase2{}
-	origin.ReadFrom(originFile)
+	if _, err := origin.ReadFrom(originFile); err != nil {
+		return fmt.Errorf("reading origin: %w", err)
+	}
 
-	fmt.Printf("Verifying contribution with hash: %s\n", hex.EncodeToString(input.Hash))
-	if err := mpcsetup.VerifyPhase2(origin, input); err != nil {
-		println("Phase2 Verification failed:", err.Error())
+	inputHash, err := computePhase2Hash(input)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Verifying contribution with hash: %s\n", hex.EncodeToString(inputHash))
+	if err := origin.Verify(input); err != nil {
+		fmt.Println("Phase2 Verification failed:", err.Error())
 		return err
 	}
 
@@ -336,7 +426,10 @@ func keys(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	phase1.ReadFrom(phase1File)
+	defer phase1File.Close()
+	if _, err := phase1.ReadFrom(phase1File); err != nil {
+		return fmt.Errorf("reading phase1: %w", err)
+	}
 
 	fmt.Println("reading phase2")
 	phase2Path := cCtx.Args().Get(1)
@@ -345,16 +438,22 @@ func keys(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	phase2.ReadFrom(phase2File)
+	defer phase2File.Close()
+	if _, err := phase2.ReadFrom(phase2File); err != nil {
+		return fmt.Errorf("reading phase2: %w", err)
+	}
 
 	fmt.Println("reading evals")
 	evalsPath := cCtx.Args().Get(2)
-	evals := &mpcsetup.Phase2Evaluations{}
 	evalsFile, err := os.Open(evalsPath)
 	if err != nil {
 		return err
 	}
-	evals.ReadFrom(evalsFile)
+	defer evalsFile.Close()
+	evals, err := readPhase2Evaluations(evalsFile)
+	if err != nil {
+		return err
+	}
 
 	fmt.Println("reading r1cs")
 	r1csPath := cCtx.Args().Get(3)
@@ -363,29 +462,58 @@ func keys(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	r1cs.ReadFrom(r1csFile)
+	defer r1csFile.Close()
+	if _, err := r1cs.ReadFrom(r1csFile); err != nil {
+		return fmt.Errorf("reading r1cs: %w", err)
+	}
 
-	// get number of constraints
-	nbConstraints := r1cs.GetNbConstraints()
+	phase1Beacon, phase1Round, err := beaconFromContext(cCtx, "phase1-beacon-round", "DRAND_PHASE1_ROUND")
+	if err != nil {
+		return err
+	}
+	if phase1Round != 0 {
+		fmt.Printf("using drand round %d for phase1 beacon\n", phase1Round)
+	} else {
+		fmt.Println("using provided phase1 beacon hex")
+	}
+
+	phase2Beacon, phase2Round, err := beaconFromContext(cCtx, "phase2-beacon-round", "DRAND_PHASE2_ROUND")
+	if err != nil {
+		return err
+	}
+	if phase2Round != 0 {
+		fmt.Printf("using drand round %d for phase2 beacon\n", phase2Round)
+	} else {
+		fmt.Println("using provided phase2 beacon hex")
+	}
+
 	fmt.Println("extracting keys")
-	pk, vk := mpcsetup.ExtractKeys(phase1, phase2, evals, nbConstraints)
+	commons := phase1.Seal(phase1Beacon)
+	pk, vk := phase2.Seal(&commons, evals, phase2Beacon)
+
+	pkTyped := pk.(*groth16.ProvingKey)
+	vkTyped := vk.(*groth16.VerifyingKey)
+
 	fmt.Println("pk written")
-	fmt.Println("cardinality", pk.Domain.Cardinality)
+	fmt.Println("cardinality", pkTyped.Domain.Cardinality)
 
 	pkFile, err := os.Create("pk")
 	if err != nil {
 		return err
 	}
-	err = pk.WriteDump(pkFile)
-	if err != nil {
-		return err
+	defer pkFile.Close()
+	if err := pkTyped.WriteDump(pkFile); err != nil {
+		return fmt.Errorf("writing pk: %w", err)
 	}
 
 	vkFile, err := os.Create("vk")
 	if err != nil {
 		return err
 	}
-	vk.WriteTo(vkFile)
+	defer vkFile.Close()
+	if _, err := vkTyped.WriteTo(vkFile); err != nil {
+		return fmt.Errorf("writing vk: %w", err)
+	}
 
 	return nil
 }
@@ -402,42 +530,19 @@ func sol(cCtx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	vk.ReadFrom(vkFile)
+	defer vkFile.Close()
+	if _, err := vk.ReadFrom(vkFile); err != nil {
+		return fmt.Errorf("reading vk: %w", err)
+	}
 
 	solFile, err := os.Create("Groth16Verifier.sol")
 	if err != nil {
 		return err
 	}
+	defer solFile.Close()
 
 	err = vk.ExportSolidity(solFile, solidity.WithPragmaVersion("0.8.20"))
 	return err
-}
-
-func ClonePhase1(phase1 *mpcsetup.Phase1) mpcsetup.Phase1 {
-	r := mpcsetup.Phase1{}
-	r.Parameters.G1.Tau = append(r.Parameters.G1.Tau, phase1.Parameters.G1.Tau...)
-	r.Parameters.G1.AlphaTau = append(r.Parameters.G1.AlphaTau, phase1.Parameters.G1.AlphaTau...)
-	r.Parameters.G1.BetaTau = append(r.Parameters.G1.BetaTau, phase1.Parameters.G1.BetaTau...)
-
-	r.Parameters.G2.Tau = append(r.Parameters.G2.Tau, phase1.Parameters.G2.Tau...)
-	r.Parameters.G2.Beta = phase1.Parameters.G2.Beta
-
-	r.PublicKeys = phase1.PublicKeys
-	r.Hash = append(r.Hash, phase1.Hash...)
-
-	return r
-}
-
-func ClonePhase2(phase2 *mpcsetup.Phase2) mpcsetup.Phase2 {
-	r := mpcsetup.Phase2{}
-	r.Parameters.G1.Delta = phase2.Parameters.G1.Delta
-	r.Parameters.G1.L = append(r.Parameters.G1.L, phase2.Parameters.G1.L...)
-	r.Parameters.G1.Z = append(r.Parameters.G1.Z, phase2.Parameters.G1.Z...)
-	r.Parameters.G2.Delta = phase2.Parameters.G2.Delta
-	r.PublicKey = phase2.PublicKey
-	r.Hash = append(r.Hash, phase2.Hash...)
-
-	return r
 }
 
 func GetS3Service(region string, anonymous bool) (*s3.S3, error) {

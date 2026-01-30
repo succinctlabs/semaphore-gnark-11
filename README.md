@@ -83,24 +83,15 @@ Ok!
 
 - Go 1.23+
 - Docker and docker-compose (for the e2e test)
-- Python 3.10+ (for the e2e test)
+- Python 3.10+ and [uv](https://github.com/astral-sh/uv) (for the e2e test)
 
 ### Unit tests (Go)
 
-The Go test suite runs the trusted setup pipeline in-process (no S3, no Docker):
+The Go test suite runs the trusted setup pipeline in-process (no S3, no Docker). A script handles artifact cleanup, PTAU download, and running the tests in the correct order:
 
 ```bash
-# Generate the R1CS (must run first)
-go test -v -run TestGenerateR1CS ./test/
-
-# Run the full in-process trusted setup (requires PTAU file in build/)
-go test -v -run TestEndToEnd ./test/
-
-# Prove and verify using extracted keys (requires TestEndToEnd artifacts)
-go test -v -run TestProveAndVerifyV2 ./test/
+./scripts/run_go_tests.sh
 ```
-
-Note: `TestEndToEnd` requires `build/powersOfTau28_hez_final_09.ptau` and `build/contributions/` to exist. The PTAU file can be downloaded from https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_09.ptau.
 
 ### E2E test (Python)
 
@@ -108,6 +99,7 @@ The e2e test exercises the full deployment pipeline — builds the CLI binary, s
 
 ```bash
 cd scripts
+uv pip install -r requirements.txt
 python3 e2e_test.py
 ```
 
