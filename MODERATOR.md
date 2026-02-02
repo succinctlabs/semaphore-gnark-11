@@ -60,6 +60,4 @@ This will:
 - Create the Solidity verifier
 - Archive the trusted-setup directory
 
-The ceremony is now fully reproducible from the artifacts in the `trusted-setup` directory.
-
 Then finish up by uploading everything into the s3 bucket. Scripts are in sp1/crates/prover
