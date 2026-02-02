@@ -29,8 +29,9 @@ func main() {
 				Action:      p2n,
 				Flags: []cli.Flag{
 					&cli.Uint64Flag{
-						Name:  "beacon-round",
-						Usage: "drand round number for the phase1 beacon (env DRAND_PHASE1_ROUND)",
+						Name:     "beacon-round",
+						Usage:    "drand round number for the phase1 beacon",
+						Required: true,
 					},
 				},
 			},
@@ -70,12 +71,14 @@ func main() {
 				Action:      keys,
 				Flags: []cli.Flag{
 					&cli.Uint64Flag{
-						Name:  "phase1-beacon-round",
-						Usage: "drand round number for the phase1 beacon (env DRAND_PHASE1_ROUND)",
+						Name:     "phase1-beacon-round",
+						Usage:    "drand round number for the phase1 beacon",
+						Required: true,
 					},
 					&cli.Uint64Flag{
-						Name:  "phase2-beacon-round",
-						Usage: "drand round number for the phase2 beacon (env DRAND_PHASE2_ROUND)",
+						Name:     "phase2-beacon-round",
+						Usage:    "drand round number for the phase2 beacon",
+						Required: true,
 					},
 				},
 			},

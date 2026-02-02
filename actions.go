@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -39,28 +40,17 @@ func computePhase2Hash(phase2 *mpcsetup.Phase2) ([]byte, error) {
 	return h[:], nil
 }
 
-func beaconFromContext(cCtx *cli.Context, roundFlag string, envRound string) ([]byte, uint64, error) {
-	if round := cCtx.Uint64(roundFlag); round != 0 {
-		beacon, err := drand.RandomnessFromRound(round)
-		if err != nil {
-			return nil, 0, err
-		}
-		return beacon, round, nil
+func beaconFromContext(cCtx *cli.Context, roundFlag string) ([]byte, uint64, error) {
+	round := cCtx.Uint64(roundFlag)
+	if round == 0 {
+		return nil, 0, fmt.Errorf("missing drand round: set --%s", roundFlag)
 	}
 
-	if roundStr := os.Getenv(envRound); roundStr != "" {
-		round, err := strconv.ParseUint(roundStr, 10, 64)
-		if err != nil {
-			return nil, 0, fmt.Errorf("invalid %s: %w", envRound, err)
-		}
-		beacon, err := drand.RandomnessFromRound(round)
-		if err != nil {
-			return nil, 0, err
-		}
-		return beacon, round, nil
+	beacon, err := drand.RandomnessFromRound(round)
+	if err != nil {
+		return nil, 0, err
 	}
-
-	return nil, 0, fmt.Errorf("missing drand round: set --%s or %s", roundFlag, envRound)
+	return beacon, round, nil
 }
 
 func p1i(cCtx *cli.Context) error {
@@ -128,7 +118,7 @@ func p2n(cCtx *cli.Context) error {
 		return fmt.Errorf("reading r1cs: %w", err)
 	}
 
-	beacon, round, err := beaconFromContext(cCtx, "beacon-round", "DRAND_PHASE1_ROUND")
+	beacon, round, err := beaconFromContext(cCtx, "beacon-round")
 	if err != nil {
 		return err
 	}
@@ -414,13 +404,68 @@ func presigned(cCtx *cli.Context) error {
 }
 
 func keys(cCtx *cli.Context) error {
-	// sanity check
+	// Validate argument count
 	if cCtx.Args().Len() != 4 {
-		return errors.New("please provide the correct arguments")
+		return fmt.Errorf("usage: key --phase1-beacon-round R1 --phase2-beacon-round R2 <phase1Path> <phase2Path> <evalsPath> <r1csPath>\n\nProvided %d arguments, need 4", cCtx.Args().Len())
 	}
 
-	fmt.Println("reading phase1")
+	// Extract paths
 	phase1Path := cCtx.Args().Get(0)
+	phase2Path := cCtx.Args().Get(1)
+	evalsPath := cCtx.Args().Get(2)
+	r1csPath := cCtx.Args().Get(3)
+
+	// Validate all input files exist
+	inputFiles := []struct {
+		path string
+		name string
+	}{
+		{phase1Path, "phase1"},
+		{phase2Path, "phase2"},
+		{evalsPath, "evals"},
+		{r1csPath, "r1cs"},
+	}
+
+	for _, f := range inputFiles {
+		if _, err := os.Stat(f.path); os.IsNotExist(err) {
+			return fmt.Errorf("%s file not found: %s", f.name, f.path)
+		} else if err != nil {
+			return fmt.Errorf("cannot access %s file %s: %w", f.name, f.path, err)
+		}
+	}
+
+	// Validate beacons early
+	phase1Beacon, phase1Round, err := beaconFromContext(cCtx, "phase1-beacon-round")
+	if err != nil {
+		return fmt.Errorf("phase1 beacon: %w", err)
+	}
+
+	phase2Beacon, phase2Round, err := beaconFromContext(cCtx, "phase2-beacon-round")
+	if err != nil {
+		return fmt.Errorf("phase2 beacon: %w", err)
+	}
+
+	// Print configuration
+	fmt.Println(strings.Repeat("=", 60))
+	fmt.Println("Key Extraction Configuration")
+	fmt.Println(strings.Repeat("=", 60))
+	fmt.Printf("Phase1 file:  %s\n", phase1Path)
+	fmt.Printf("Phase2 file:  %s\n", phase2Path)
+	fmt.Printf("Evals file:   %s\n", evalsPath)
+	fmt.Printf("R1CS file:    %s\n", r1csPath)
+	if phase1Round != 0 {
+		fmt.Printf("Phase1 beacon: drand round %d\n", phase1Round)
+	} else {
+		fmt.Println("Phase1 beacon: provided hex value")
+	}
+	if phase2Round != 0 {
+		fmt.Printf("Phase2 beacon: drand round %d\n", phase2Round)
+	} else {
+		fmt.Println("Phase2 beacon: provided hex value")
+	}
+	fmt.Println(strings.Repeat("=", 60))
+
+	fmt.Println("reading phase1")
 	phase1 := &mpcsetup.Phase1{}
 	phase1File, err := os.Open(phase1Path)
 	if err != nil {
@@ -432,7 +477,6 @@ func keys(cCtx *cli.Context) error {
 	}
 
 	fmt.Println("reading phase2")
-	phase2Path := cCtx.Args().Get(1)
 	phase2 := &mpcsetup.Phase2{}
 	phase2File, err := os.Open(phase2Path)
 	if err != nil {
@@ -444,7 +488,6 @@ func keys(cCtx *cli.Context) error {
 	}
 
 	fmt.Println("reading evals")
-	evalsPath := cCtx.Args().Get(2)
 	evalsFile, err := os.Open(evalsPath)
 	if err != nil {
 		return err
@@ -456,7 +499,6 @@ func keys(cCtx *cli.Context) error {
 	}
 
 	fmt.Println("reading r1cs")
-	r1csPath := cCtx.Args().Get(3)
 	r1cs := &cs.R1CS{}
 	r1csFile, err := os.Open(r1csPath)
 	if err != nil {
@@ -465,26 +507,6 @@ func keys(cCtx *cli.Context) error {
 	defer r1csFile.Close()
 	if _, err := r1cs.ReadFrom(r1csFile); err != nil {
 		return fmt.Errorf("reading r1cs: %w", err)
-	}
-
-	phase1Beacon, phase1Round, err := beaconFromContext(cCtx, "phase1-beacon-round", "DRAND_PHASE1_ROUND")
-	if err != nil {
-		return err
-	}
-	if phase1Round != 0 {
-		fmt.Printf("using drand round %d for phase1 beacon\n", phase1Round)
-	} else {
-		fmt.Println("using provided phase1 beacon hex")
-	}
-
-	phase2Beacon, phase2Round, err := beaconFromContext(cCtx, "phase2-beacon-round", "DRAND_PHASE2_ROUND")
-	if err != nil {
-		return err
-	}
-	if phase2Round != 0 {
-		fmt.Printf("using drand round %d for phase2 beacon\n", phase2Round)
-	} else {
-		fmt.Println("using provided phase2 beacon hex")
 	}
 
 	fmt.Println("extracting keys")
