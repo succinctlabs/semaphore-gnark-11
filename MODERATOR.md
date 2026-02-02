@@ -26,14 +26,17 @@ From this repo root, first make sure `build` and `trusted-setup` are cleared. Th
 ```bash
 bash scripts/create-public-s3-bucket.sh <bucket-name>
 go build
-python3 scripts/initialize_trusted_setup.py <bucket-name> --circuit-path <circuit-path>/groth16_circuit.bin  --contribution-count <num-contributors> --phase1-beacon-round <first-beacon-round> 
+python3 scripts/initialize_trusted_setup.py --bucket-name <bucket-name> --circuit-path <circuit-path>/groth16_circuit.bin --contribution-count <num-contributors> --phase1-beacon-round <first-beacon-round> --phase2-beacon-round <last-beacon-round>
 ```
 
-where: 
-- `<bucket-name>` is the name of the S3 bucket to use for the ceremony. 
+where:
+- `<bucket-name>` is the name of the S3 bucket to use for the ceremony.
 - `<circuit-path>` is the path to the circuit file generated in the previous step. It's `<sp1-repo-root>/crates/prover/build/groth16_circuit.bin`.
 - `<num-contributors>` is the number of contributors to the ceremony.
-- `<first-beacon-round>` is the drand beacon round to use for the first contribution.
+- `<first-beacon-round>` is the drand beacon round to use for phase 1 randomness.
+- `<last-beacon-round>` is the drand beacon round to use for phase 2 randomness (used during finalization).
+
+**Important**: The beacon rounds are saved to `trusted-setup/beacon-rounds.txt` for reproducibility. This ensures that the proving keys can be fully reproduced from the artifacts in the `trusted-setup` directory.
 
 This script will output some messages in `trusted-setup/messages` directory. Send them to the people you want to contribute to the ceremony.
 
@@ -48,9 +51,15 @@ Repeat this step for each contribution.
 
 1. Run the finalization script:
 ```bash
-bash scripts/finalize.sh <first-beacon-round> <last-beacon-round> <circuit-path>
+bash scripts/finalize.sh <circuit-path>
 ```
 
-This will generate the keys, create the Solidity verifier, and archive the trusted-setup directory.
+This will:
+- Read the beacon rounds from `trusted-setup/beacon-rounds.txt` (created during initialization)
+- Generate the proving and verifying keys
+- Create the Solidity verifier
+- Archive the trusted-setup directory
+
+The ceremony is now fully reproducible from the artifacts in the `trusted-setup` directory.
 
 Then finish up by uploading everything into the s3 bucket. Scripts are in sp1/crates/prover

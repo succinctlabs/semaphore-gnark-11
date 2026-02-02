@@ -406,7 +406,7 @@ func presigned(cCtx *cli.Context) error {
 func keys(cCtx *cli.Context) error {
 	// Validate argument count
 	if cCtx.Args().Len() != 4 {
-		return fmt.Errorf("usage: key --phase1-beacon-round R1 --phase2-beacon-round R2 <phase1Path> <phase2Path> <evalsPath> <r1csPath>\n\nProvided %d arguments, need 4", cCtx.Args().Len())
+		return fmt.Errorf("usage: key <phase1Path> <phase2Path> <evalsPath> <r1csPath>\n\nProvided %d arguments, need 4", cCtx.Args().Len())
 	}
 
 	// Extract paths
@@ -434,13 +434,41 @@ func keys(cCtx *cli.Context) error {
 		}
 	}
 
-	// Validate beacons early
-	phase1Beacon, phase1Round, err := beaconFromContext(cCtx, "phase1-beacon-round")
+	// Read beacon rounds from trusted-setup/beacon-rounds.txt
+	// File format (simple two-line text file):
+	//   Line 1: phase1 beacon round number
+	//   Line 2: phase2 beacon round number
+	beaconFile := "trusted-setup/beacon-rounds.txt"
+	data, err := os.ReadFile(beaconFile)
+	if err != nil {
+		return fmt.Errorf("cannot read beacon rounds file %s: %w\n(This file should be created during trusted setup initialization)", beaconFile, err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		return fmt.Errorf("invalid beacon rounds file: expected at least 2 lines, got %d", len(lines))
+	}
+
+	phase1Round, err := strconv.ParseUint(strings.TrimSpace(lines[0]), 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid phase1 beacon round in %s: %w", beaconFile, err)
+	}
+
+	phase2Round, err := strconv.ParseUint(strings.TrimSpace(lines[1]), 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid phase2 beacon round in %s: %w", beaconFile, err)
+	}
+
+	fmt.Printf("Loaded beacon rounds from %s\n", beaconFile)
+	fmt.Printf("  Phase1 beacon round: %d\n", phase1Round)
+	fmt.Printf("  Phase2 beacon round: %d\n", phase2Round)
+
+	phase1Beacon, err := drand.RandomnessFromRound(phase1Round)
 	if err != nil {
 		return fmt.Errorf("phase1 beacon: %w", err)
 	}
 
-	phase2Beacon, phase2Round, err := beaconFromContext(cCtx, "phase2-beacon-round")
+	phase2Beacon, err := drand.RandomnessFromRound(phase2Round)
 	if err != nil {
 		return fmt.Errorf("phase2 beacon: %w", err)
 	}

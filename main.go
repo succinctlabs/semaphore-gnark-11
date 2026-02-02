@@ -69,18 +69,6 @@ func main() {
 				Usage:       "key <phase1Path> <phase2Path> <phase2EvalsPath> <r1csPath>",
 				Description: "extract proving and verifying keys",
 				Action:      keys,
-				Flags: []cli.Flag{
-					&cli.Uint64Flag{
-						Name:     "phase1-beacon-round",
-						Usage:    "drand round number for the phase1 beacon",
-						Required: true,
-					},
-					&cli.Uint64Flag{
-						Name:     "phase2-beacon-round",
-						Usage:    "drand round number for the phase2 beacon",
-						Required: true,
-					},
-				},
 			},
 			{
 				Name:        "sol",
