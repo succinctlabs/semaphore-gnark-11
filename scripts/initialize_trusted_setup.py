@@ -53,7 +53,9 @@ Example:
     python scripts/initialize_trusted_setup.py \\
         --bucket-name my-trusted-setup-bucket \\
         --circuit-path /path/to/circuit.bin \\
-        --contribution-count 5
+        --contribution-count 5 \\
+        --phase1-beacon-round 1234567 \\
+        --phase2-beacon-round 1234600
         """,
     )
     parser.add_argument(
@@ -73,6 +75,18 @@ Example:
         type=int,
         help="Number of expected contributions",
     )
+    parser.add_argument(
+        "--phase1-beacon-round",
+        required=True,
+        type=int,
+        help="Drand round number for the Phase1 beacon",
+    )
+    parser.add_argument(
+        "--phase2-beacon-round",
+        required=True,
+        type=int,
+        help="Drand round number for the Phase2 beacon (used during finalization)",
+    )
 
     args = parser.parse_args()
 
@@ -84,12 +98,22 @@ Example:
         print("Error: Contribution count must be at least 1")
         return 1
 
+    if args.phase1_beacon_round <= 0:
+        print("Error: Phase1 beacon round must be a positive drand round number")
+        return 1
+
+    if args.phase2_beacon_round <= 0:
+        print("Error: Phase2 beacon round must be a positive drand round number")
+        return 1
+
     print("=" * 60)
     print("Trusted Setup Initialization")
     print("=" * 60)
     print(f"Bucket: {args.bucket_name}")
     print(f"Circuit: {args.circuit_path}")
     print(f"Contributors: {args.contribution_count}")
+    print(f"Phase1 beacon round: {args.phase1_beacon_round}")
+    print(f"Phase2 beacon round: {args.phase2_beacon_round}")
     print("=" * 60)
 
     # Create directories
@@ -100,8 +124,22 @@ Example:
         build_binary()
         download_ptau(PTAU_PATH, NB_CONSTRAINTS_LOG2)
         phase1_import(PTAU_PATH, PHASE1_PATH)
-        phase2_init(PHASE1_PATH, args.circuit_path, PHASE2_PATH, EVALS_PATH)
+        phase2_init(
+            PHASE1_PATH,
+            args.circuit_path,
+            PHASE2_PATH,
+            EVALS_PATH,
+            beacon_round=args.phase1_beacon_round,
+        )
         phase2_upload(args.bucket_name)
+
+        # Save beacon rounds for reproducibility
+        # File format: Line 1 = phase1 beacon round, Line 2 = phase2 beacon round
+        beacon_rounds_path = TRUSTED_SETUP_DIR / "beacon-rounds.txt"
+        with open(beacon_rounds_path, "w") as f:
+            f.write(f"{args.phase1_beacon_round}\n")
+            f.write(f"{args.phase2_beacon_round}\n")
+        print(f"Saved beacon rounds to: {beacon_rounds_path}")
 
         # Generate presigned URLs for each contributor
         # URL index 0 → first contributor uploads phase2-0

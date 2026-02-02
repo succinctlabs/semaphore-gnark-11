@@ -18,4 +18,6 @@ semaphore-mtb-setup-linux_arm
 build/
 trusted-setup/
 
+semaphore-gnark-11
+
 __pycache__

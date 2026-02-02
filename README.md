@@ -16,7 +16,7 @@ For the phase 1 we will be reusing the setup done by the joint effort of many co
 2. Install Go https://go.dev/doc/install
 3. Minimum RAM requirement is 16GB
 
-## Phase 2
+## For ceremony participants.
 
 In the phase 2, participants add randomness to make the setup specific to the actual circuit, creating the final proving and verification keys needed for SP1. To add your contribution to the phase 2, follow the steps below:
 
@@ -83,35 +83,30 @@ Ok!
 
 - Go 1.23+
 - Docker and docker-compose (for the e2e test)
-- Python 3.10+ (for the e2e test)
+- Python 3.10+ and [uv](https://github.com/astral-sh/uv) (for the e2e test)
+- **Drand beacons**: Tests use hardcoded drand beacon rounds for deterministic, reproducible key generation
 
 ### Unit tests (Go)
 
-The Go test suite runs the trusted setup pipeline in-process (no S3, no Docker):
+The Go test suite runs the trusted setup pipeline in-process (no S3, no Docker). It uses hardcoded drand beacon values for Phase1 and Phase2 sealing. A script handles artifact cleanup, PTAU download, and running the tests in the correct order:
 
 ```bash
-# Generate the R1CS (must run first)
-go test -v -run TestGenerateR1CS ./test/
-
-# Run the full in-process trusted setup (requires PTAU file in build/)
-go test -v -run TestEndToEnd ./test/
-
-# Prove and verify using extracted keys (requires TestEndToEnd artifacts)
-go test -v -run TestProveAndVerifyV2 ./test/
+./scripts/run_go_tests.sh
 ```
 
-Note: `TestEndToEnd` requires `build/powersOfTau28_hez_final_09.ptau` and `build/contributions/` to exist. The PTAU file can be downloaded from https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_09.ptau.
+The tests will fetch randomness from drand quicknet mainnet for the specified rounds.
 
 ### E2E test (Python)
 
-The e2e test exercises the full deployment pipeline — builds the CLI binary, starts a local Minio (S3) instance, runs contributions via presigned URLs, verifies them, extracts keys, and generates a proof:
+The e2e test exercises the full deployment pipeline — builds the CLI binary, starts a local Minio (S3) instance, runs contributions via presigned URLs, verifies them, extracts keys with drand beacons, and generates a proof:
 
 ```bash
 cd scripts
+uv pip install -r requirements.txt
 python3 e2e_test.py
 ```
 
-This test clears `build/` and `trusted-setup/` at the start of each run.
+This test uses drand rounds 1000 (Phase1 beacon) and 2000 (Phase2 beacon) for deterministic key extraction. The test clears `build/` and `trusted-setup/` at the start of each run.
 
 ## Acknowledgements
 

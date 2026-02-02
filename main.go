@@ -27,6 +27,13 @@ func main() {
 				Usage:       "p2n <inputPh1> <inputR1cs> <outputPh2> <outputEvals>",
 				Description: "initialize phase 2 for the given circuit",
 				Action:      p2n,
+				Flags: []cli.Flag{
+					&cli.Uint64Flag{
+						Name:     "beacon-round",
+						Usage:    "drand round number for the phase1 beacon",
+						Required: true,
+					},
+				},
 			},
 			/* ----------------------------- Phase 2 Upload to S3 ----------------------- */
 			{
