@@ -197,8 +197,6 @@ def extract_keys(
     phase2_path: Path,
     evals_path: Path,
     circuit_path: Path,
-    phase1_beacon_round: int,
-    phase2_beacon_round: int,
     env: dict | None = None,
 ) -> None:
     """Extract proving and verifying keys.
@@ -210,8 +208,6 @@ def extract_keys(
 
     print("Extracting keys...")
     cmd = [str(BINARY), "key"]
-    cmd.extend(["--phase1-beacon-round", str(phase1_beacon_round)])
-    cmd.extend(["--phase2-beacon-round", str(phase2_beacon_round)])
     cmd.extend([
         str(phase1_path),
         str(phase2_path),
