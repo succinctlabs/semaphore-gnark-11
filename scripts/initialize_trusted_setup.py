@@ -29,6 +29,7 @@ from trusted_setup import (
     phase1_import,
     phase2_init,
     phase2_upload,
+    save_beacon_rounds,
 )
 
 # Configuration
@@ -133,13 +134,7 @@ Example:
         )
         phase2_upload(args.bucket_name)
 
-        # Save beacon rounds for reproducibility
-        # File format: Line 1 = phase1 beacon round, Line 2 = phase2 beacon round
-        beacon_rounds_path = TRUSTED_SETUP_DIR / "beacon-rounds.txt"
-        with open(beacon_rounds_path, "w") as f:
-            f.write(f"{args.phase1_beacon_round}\n")
-            f.write(f"{args.phase2_beacon_round}\n")
-        print(f"Saved beacon rounds to: {beacon_rounds_path}")
+        save_beacon_rounds(TRUSTED_SETUP_DIR, args.phase1_beacon_round, args.phase2_beacon_round)
 
         # Generate presigned URLs for each contributor
         # URL index 0 → first contributor uploads phase2-0

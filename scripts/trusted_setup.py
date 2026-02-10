@@ -192,6 +192,22 @@ def phase2_verify(index: int, bucket_name: str, env: dict | None = None) -> None
     run_cmd([str(BINARY), "p2v", str(index), bucket_name], cwd=REPO_ROOT, env=env)
 
 
+def save_beacon_rounds(
+    trusted_setup_dir: Path,
+    phase1_beacon_round: int,
+    phase2_beacon_round: int,
+) -> None:
+    """Save beacon rounds to a file for the Go binary's key command.
+
+    File format: Line 1 = phase1 beacon round, Line 2 = phase2 beacon round.
+    """
+    beacon_rounds_path = trusted_setup_dir / "beacon-rounds.txt"
+    with open(beacon_rounds_path, "w") as f:
+        f.write(f"{phase1_beacon_round}\n")
+        f.write(f"{phase2_beacon_round}\n")
+    print(f"Saved beacon rounds to: {beacon_rounds_path}")
+
+
 def extract_keys(
     phase1_path: Path,
     phase2_path: Path,
