@@ -110,20 +110,21 @@ This test uses drand rounds 1000 (Phase1 beacon) and 2000 (Phase2 beacon) for de
 
 ## Reproducing keys from trusted setup transcript
 
+Run the following commands. The trusted setup transcript is very big, so make sure you have a stable internet connection.
+
 ```bash
 # Download the trusted setup transcript
 curl "https://sp1-circuits.s3-us-east-2.amazonaws.com/v6.0.0-trusted-setup.tar.gz" -o trusted-setup.tar.gz
 
-# Download ptau
-curl "https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_24.ptau" -o powersOfTau28_hez_final_24.ptau
-
-# Extract trusted setup transcript
+# Extract trusted setup transcript.
 tar -xzf trusted-setup.tar.gz
 
-# Generate keys. They are outputted to the files `pk` and `vk` in the root directory.
-./semaphore-gnark-11 key trusted-setup/phase1 trusted-setup/phase2-11 trusted-setup/evals powersOfTau28_hez_final_24.ptau
-```
+# Build the binary.
+go build
 
+# Generate keys. They are outputted to the files `pk` and `vk` in the root directory.
+./semaphore-gnark-11 key trusted-setup/phase1 trusted-setup/phase2-11 trusted-setup/evals /path/to/circuit/groth16_circuit.bin powersOfTau28_hez_final_24.ptau
+```
 
 ## Acknowledgements
 
