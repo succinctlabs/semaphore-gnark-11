@@ -192,8 +192,6 @@ def main() -> int:
             final_phase2_path,
             EVALS_PATH,
             R1CS_PATH,
-            phase1_beacon_round=PHASE1_BEACON_ROUND,
-            phase2_beacon_round=PHASE2_BEACON_ROUND,
             env=MINIO_ENV,
         )
 

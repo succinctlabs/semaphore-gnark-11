@@ -203,9 +203,6 @@ def extract_keys(
 
     Keys are output to current working directory (pk, vk files).
     """
-    if phase1_beacon_round <= 0 or phase2_beacon_round <= 0:
-        raise ValueError("phase1_beacon_round and phase2_beacon_round must be set to positive drand rounds")
-
     print("Extracting keys...")
     cmd = [str(BINARY), "key"]
     cmd.extend([
