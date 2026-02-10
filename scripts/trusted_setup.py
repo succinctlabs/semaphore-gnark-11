@@ -192,26 +192,35 @@ def phase2_verify(index: int, bucket_name: str, env: dict | None = None) -> None
     run_cmd([str(BINARY), "p2v", str(index), bucket_name], cwd=REPO_ROOT, env=env)
 
 
+def save_beacon_rounds(
+    trusted_setup_dir: Path,
+    phase1_beacon_round: int,
+    phase2_beacon_round: int,
+) -> None:
+    """Save beacon rounds to a file for the Go binary's key command.
+
+    File format: Line 1 = phase1 beacon round, Line 2 = phase2 beacon round.
+    """
+    beacon_rounds_path = trusted_setup_dir / "beacon-rounds.txt"
+    with open(beacon_rounds_path, "w") as f:
+        f.write(f"{phase1_beacon_round}\n")
+        f.write(f"{phase2_beacon_round}\n")
+    print(f"Saved beacon rounds to: {beacon_rounds_path}")
+
+
 def extract_keys(
     phase1_path: Path,
     phase2_path: Path,
     evals_path: Path,
     circuit_path: Path,
-    phase1_beacon_round: int,
-    phase2_beacon_round: int,
     env: dict | None = None,
 ) -> None:
     """Extract proving and verifying keys.
 
     Keys are output to current working directory (pk, vk files).
     """
-    if phase1_beacon_round <= 0 or phase2_beacon_round <= 0:
-        raise ValueError("phase1_beacon_round and phase2_beacon_round must be set to positive drand rounds")
-
     print("Extracting keys...")
     cmd = [str(BINARY), "key"]
-    cmd.extend(["--phase1-beacon-round", str(phase1_beacon_round)])
-    cmd.extend(["--phase2-beacon-round", str(phase2_beacon_round)])
     cmd.extend([
         str(phase1_path),
         str(phase2_path),

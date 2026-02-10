@@ -44,10 +44,10 @@ echo ""
 echo "Generating keys..."
 ./semaphore-gnark-11 key trusted-setup/phase1 trusted-setup/phase2-2 trusted-setup/evals ${CIRCUIT_PATH}/groth16_circuit.bin
 
-# Copy keys to circuit directory
-echo "Copying keys to circuit directory..."
-cp pk ${CIRCUIT_PATH}/groth16_pk.bin
-cp vk ${CIRCUIT_PATH}/groth16_vk.bin
+# # Copy keys to circuit directory
+# echo "Copying keys to circuit directory..."
+# cp pk ${CIRCUIT_PATH}/groth16_pk.bin
+# cp vk ${CIRCUIT_PATH}/groth16_vk.bin
 
 # Generate Solidity verifier
 echo "Generating Solidity verifier..."
@@ -56,17 +56,16 @@ echo "Generating Solidity verifier..."
 # Copy verifier and phase2 file
 echo "Copying verifier and phase2 file..."
 cp Groth16Verifier.sol trusted-setup/Groth16Verifier.sol
-cp phase2 ${CIRCUIT_PATH}/groth16_phase2.bin
 
 echo ""
 echo "Finalization complete!"
 echo "  Proving key: ${CIRCUIT_PATH}/groth16_pk.bin"
 echo "  Verifying key: ${CIRCUIT_PATH}/groth16_vk.bin"
-echo "  Phase 2 file: ${CIRCUIT_PATH}/groth16_phase2.bin"
 echo "  Solidity verifier: trusted-setup/Groth16Verifier.sol"
 
 # Archive the trusted setup directory
 echo ""
 echo "Creating archive of trusted-setup directory..."
+mv trusted-setup/messages messages
 tar -czf trusted-setup.tar.gz trusted-setup/
 echo "Archive created: trusted-setup.tar.gz"

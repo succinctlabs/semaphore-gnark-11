@@ -60,7 +60,7 @@ Then you can inform the coordinator that you have added your contribution, by pr
 
 Once the coordinator has verified your contribution, you can publish an attestation for it on social media, specifying the URL and hash of your contribution.
 
-## Verifying contribution
+### Verifying your contribution
 
 If you want, you can verify any contribution given its index. Run the following command:
 
@@ -107,6 +107,24 @@ python3 e2e_test.py
 ```
 
 This test uses drand rounds 1000 (Phase1 beacon) and 2000 (Phase2 beacon) for deterministic key extraction. The test clears `build/` and `trusted-setup/` at the start of each run.
+
+## Reproducing keys from trusted setup transcript
+
+Run the following commands. The trusted setup transcript is very big, so make sure you have a stable internet connection.
+
+```bash
+# Download the trusted setup transcript
+curl "https://sp1-circuits.s3-us-east-2.amazonaws.com/v6.0.0-trusted-setup.tar.gz" -o trusted-setup.tar.gz
+
+# Extract trusted setup transcript.
+tar -xzf trusted-setup.tar.gz
+
+# Build the binary.
+go build
+
+# Generate keys. They are outputted to the files `pk` and `vk` in the root directory.
+./semaphore-gnark-11 key trusted-setup/phase1 trusted-setup/phase2-11 trusted-setup/evals /path/to/circuit/groth16_circuit.bin powersOfTau28_hez_final_24.ptau
+```
 
 ## Acknowledgements
 

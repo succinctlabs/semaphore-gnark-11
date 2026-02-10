@@ -36,6 +36,7 @@ from trusted_setup import (
     phase2_upload,
     phase2_verify,
     run_cmd,
+    save_beacon_rounds,
 )
 
 # Configuration
@@ -187,13 +188,13 @@ def main() -> int:
             f"http://127.0.0.1:9000/{BUCKET_NAME}/phase2-{final_index}",
         ])
 
+        save_beacon_rounds(TRUSTED_SETUP_DIR, PHASE1_BEACON_ROUND, PHASE2_BEACON_ROUND)
+
         extract_keys(
             PHASE1_PATH,
             final_phase2_path,
             EVALS_PATH,
             R1CS_PATH,
-            phase1_beacon_round=PHASE1_BEACON_ROUND,
-            phase2_beacon_round=PHASE2_BEACON_ROUND,
             env=MINIO_ENV,
         )
 
